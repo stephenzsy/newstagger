@@ -126,28 +126,57 @@ module NewsTagger
           result
         end
 
+        def process_paragraph(node)
+          node.css('.articleLocation').remove
+          text = node.text.strip.gsub("\n", ' ').squeeze(' ')
+          {:text => text}
+        end
+
+        def process_article(url, content)
+          doc = Nokogiri::HTML(content)
+
+          article = {
+              :url => url,
+              :paragraphs => []
+          }
+
+          article_content = doc.css('#content #articleContent').first
+          content_section = article_content.css(".sectionContent .sectionColumns .column2").first
+          article[:heading] = content_section.css('h1').first.children.text.strip
+
+          text_section = content_section.css("#articleText").first
+          article_info = text_section.css("#articleInfo").first
+          by_line = article_info.css(".byline").first
+          unless by_line.nil?
+            article[:by] = /^By (.*)$/.match(by_line.text.strip)[1]
+          end
+          location = article_info.css(".location").first
+          unless location.nil?
+            article[:location] = location.text.strip
+          end
+          timestamp = article_info.css(".timestamp").first
+          unless timestamp.nil?
+            article[:timestamp] = Time.parse(timestamp.text).utc.iso8601
+          end
+
+          focus_paragraph = process_paragraph text_section.css(".focusParagraph p").first
+          focus_paragraph[:focus] = true
+          article[:paragraphs] << focus_paragraph
+          text_section.children.filter('p').each do |node|
+            article[:paragraphs] << process_paragraph(node)
+          end
+
+          article
+        end
 
         def retrieve date
           result = retrieve_processed_daily_index date do |index|
             index[:articles].each do |article|
-              retrieve_article article[:url] do |text_content|
-                normalized_article = {}
-                doc = Nokogiri::HTML(text_content)
-                article_content = doc.css('#content #articleContent').first
-                content_section = article_content.css(".sectionContent .sectionColumns .column2").first
-                normalized_article[:url] = article[:url]
-                normalized_article[:heading] = content_section.css('h1').first.children.text.strip
-                text_section = content_section.css("#articleText").first
-                article_info = text_section.css("#articleInfo").first
-                by_line = article_info.css(".byline").first
-                unless by_line.nil?
-                  normalized_article[:author] = /^By (.*)$/.match(by_line.text.strip)[1]
-                end
-
-                #  p text_section
-
+              retrieve_article article[:url] do |content|
+                normalized_article = process_article article[:url], content
                 puts JSON.pretty_generate normalized_article
-                #  return
+                return
+
               end
             end
           end
