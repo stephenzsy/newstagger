@@ -12,7 +12,7 @@ namespace :newstagger do
       require 'newstagger/vendor/bloomberg'
 
       retriever = NewsTagger::Vendor::Bloomberg::Retriever.new
-      t = Time.new(2008, 1, 1).utc
+      t = Time.new(2009, 05, 31).utc
       until t >= Time.new(2011, 1, 1).utc do
         retriever.retrieve t
         t += 1.day

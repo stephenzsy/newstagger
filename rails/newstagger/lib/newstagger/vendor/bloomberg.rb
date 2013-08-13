@@ -32,6 +32,60 @@ module NewsTagger
           result
         end
 
+        def parse_html_text_block(node, article)
+          return nil if ['decoration-top', 'decoration'].include? node['class']
+          t = ''
+          current_paragraph = {}
+          node.children.each do |n|
+            if n.type== Nokogiri::XML::Node::TEXT_NODE
+              t << n.text
+              next
+            end
+            case n.name
+              when 'p'
+                current_paragraph[:sub_paragraphs] ||= []
+                current_paragraph[:sub_paragraphs] << parse_html_text_block(n, article)
+              when 'a'
+                if n['class'] == 'web_ticker'
+                  t << n.text
+                  current_paragraph[:tickers] ||= []
+                  if n['ticker'].nil?
+                    current_paragraph[:tickers] << /^\/quote\/(.*)$/.match(n['href'])[1]
+                  else
+                    current_paragraph[:tickers] << n['ticker']
+                  end
+                elsif n['href'].start_with? 'http://topics.bloomberg.com/'
+                  t << n.text
+                  current_paragraph[:topics] ||= []
+                  current_paragraph[:topics] << URI.parse(n['href']).path.gsub(/^\//, '').gsub(/\/$/, '')
+                elsif n['href'].start_with? 'http://search.bloomberg.com/search'
+                  t << n.text
+                  current_paragraph[:searches] ||= []
+                  current_paragraph[:searches] << CGI.parse(URI.parse(n['href']).query)['q']
+                elsif n['href'].start_with? 'mailto:'
+                  t << n.text
+                  article[:emails] ||= []
+                  article[:emails] << n['href'].gsub(/^mailto:/, '')
+                else
+                  t << n.text
+                  current_paragraph[:links] ||= []
+                  current_paragraph[:links] << n['href']
+                end
+              when 'span', 'b', 'strong', 'em'
+                t << n.text
+              when 'br'
+                t << ' '
+              when 'i', 'img'
+                next t << ' '
+              else
+                p n
+                raise 'unrecognized condition'
+            end
+          end
+          current_paragraph[:text] = t.strip.gsub("\n", ' ').squeeze(' ')
+          current_paragraph
+        end
+
         def process_article(url, content)
           doc = Nokogiri::HTML(content)
 
@@ -70,56 +124,27 @@ module NewsTagger
           story_display.children.each do |node|
             next if node.type == Nokogiri::XML::Node::TEXT_NODE
             case node.name
-              when 'script'
+              when 'script',
+                  'br',
+                  'i', 'img'
                 next
               when 'div'
                 # TODO: related
                 next
-              when 'p'
-                next if ['decoration-top', 'decoration'].include? node['class']
-                t = ''
-                current_paragraph = {}
-                node.children.each do |n|
-                  if n.type== Nokogiri::XML::Node::TEXT_NODE
-                    t << n.text
-                    next
-                  end
-                  case n.name
-                    when 'a'
-                      if n['class'] == 'web_ticker'
-                        t << n.text
-                        current_paragraph[:tickers] ||= []
-                        if n['ticker'].nil?
-                          current_paragraph[:tickers] << /^\/quote\/(.*)$/.match(n['href'])[1]
-                        else
-                          current_paragraph[:tickers] << n['ticker']
-                        end
-                      elsif n['href'].start_with? 'http://topics.bloomberg.com/'
-                        t << n.text
-                        current_paragraph[:topics] ||= []
-                        current_paragraph[:topics] << URI.parse(n['href']).path.gsub(/^\//, '').gsub(/\/$/, '')
-                      elsif n['href'].start_with? 'http://search.bloomberg.com/search'
-                        t << n.text
-                        current_paragraph[:searches] ||= []
-                        current_paragraph[:searches] << CGI.parse(URI.parse(n['href']).query)['q']
-                      elsif n['href'].start_with? 'mailto:'
-                        t << n.text
-                        article[:emails] ||= []
-                        article[:emails] << n['href'].gsub(/^mailto:/, '')
-                      else
-                        t << n.text
-                        current_paragraph[:links] ||= []
-                        current_paragraph[:links] << n['href']
-                      end
-                    when 'span'
-                      t << n.text
-                    else
-                      p n
-                      raise 'unrecognized condition'
-                  end
+              when 'ol', 'ul'
+                list = []
+                node.css('li').each do |element|
+                  list << parse_html_text_block(element, article)
                 end
-                current_paragraph[:text] = t.strip.gsub("\n", ' ').squeeze(' ')
-                current_section[:paragraphs] << current_paragraph
+                current_section[:paragraphs] << list
+                has_content = true
+              when 'blockquote', 'em'
+                node.css('p').each do |n|
+                  current_section[:paragraphs] << parse_html_text_block(n, article)
+                  has_content = true
+                end
+              when 'p', 'b'
+                current_section[:paragraphs] << parse_html_text_block(node, article)
                 has_content = true
               when 'h2'
                 article[:sections] << current_section
@@ -133,7 +158,9 @@ module NewsTagger
                     :text => node.text
                 }
               else
-                next if node['class'] == 'decoration-bottom'
+                p node if node['class'].nil?
+                next if node['class'] == 'decoration-bottom' or node['class'].include? 'mt-enclosure'
+                p node
                 raise 'unrecognized condition'
             end
           end

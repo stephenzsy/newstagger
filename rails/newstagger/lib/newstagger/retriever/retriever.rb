@@ -75,8 +75,9 @@ module NewsTagger
       def retrieve(date)
         retrieve_processed_daily_index date do |index|
           index[:articles].each do |article|
+            p article[:url]
             retrieve_processed_article article[:url] do |normalized_article|
-              puts "#{article[:url]} : #{normalized_article[:by]}"
+
             end
           end
         end
