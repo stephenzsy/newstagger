@@ -3,101 +3,22 @@ require 'nokogiri'
 require 'digest/sha2'
 require 'yaml'
 
+require 'newstagger/retriever/s3_cache'
+require 'newstagger/retriever/retriever'
+
 module NewsTagger
   module Vendor
     module Reuters
 
-      class S3Cache
-        def initialize
-          config = YAML.load_file(Rails.root.join 'config/aws-config.yml')[Rails.env]
-          cache_config = config[:s3_cache]
-          @bucket = cache_config[:bucket]
-          @prefix = cache_config[:prefix]
-          @region = cache_config[:region]
-          @s3 = AWS::S3.new :access_key_id => config[:access_key_id], :secret_access_key => config[:secret_access_key], :region => cache_config[:region]
-          @s3_bucket = @s3.buckets[@bucket]
-        end
-
-        def retrieve_from_cache topic, url
-          s3_key = "#{@prefix}#{topic}/#{Digest::SHA2.hexdigest(url)}"
-          s3_obj = @s3_bucket.objects[s3_key]
-          return false unless s3_obj.exists?
-          content = ''
-          s3_obj.read do |chunk|
-            content += chunk
-          end
-          yield content
-          true
-        end
-
-        def send_to_cache(topic, url, content, document_type, metadata={})
-          content_type = nil
-          case document_type
-            when :html
-              content_type = 'text/html'
-            when :json
-              content_type = 'application/json'
-          end
-          s3_key = "#{@prefix}#{topic}/#{Digest::SHA2.hexdigest(url)}"
-          s3_obj = @s3_bucket.objects[s3_key]
-          s3_obj.write(content, {:content_type => content_type, :metadata => metadata})
-        end
-
-      end
-
-      class Retriever
+      class Retriever < NewsTagger::Retriever::Retriever
         @@TOPIC_VENDOR = 'reuters'
 
         def initialize
-          @cache = S3Cache.new
+          super 'reuters'
         end
 
         def get_daily_index_url date
           "http://www.reuters.com/resources/archive/us/#{date.strftime "%Y%m%d"}.html"
-        end
-
-        def retrieve_daily_index date
-          url = get_daily_index_url date
-          result = @cache.retrieve_from_cache("#{@@TOPIC_VENDOR}:daily_index:raw", url) do |content, metadata={}|
-            yield content
-            return true
-          end
-          unless result
-            uri = URI url
-            content = Net::HTTP.get uri
-            @cache.send_to_cache "#{@@TOPIC_VENDOR}:daily_index:raw", url, content, :html, {:url => url}
-            yield content
-          end
-          true
-        end
-
-        def retrieve_article(url)
-          result = @cache.retrieve_from_cache("#{@@TOPIC_VENDOR}:article:raw", url) do |content, metadata={}|
-            yield content
-            return true
-          end
-          unless result
-            uri = URI url
-            content = Net::HTTP.get uri
-            @cache.send_to_cache "#{@@TOPIC_VENDOR}:article:raw", url, content, :html, {:url => url}
-            yield content
-          end
-          true
-        end
-
-        def retrieve_processed_daily_index date
-          url = get_daily_index_url date
-          result = @cache.retrieve_from_cache("#{@@TOPIC_VENDOR}:daily_index:processed", url) do |content, metadata={}|
-            yield JSON.parse content, :symbolize_names => true
-          end
-          unless result
-            result = retrieve_daily_index date do |content|
-              index = process_index content, date
-              @cache.send_to_cache "#{@@TOPIC_VENDOR}:daily_index:processed", url, JSON.generate(index), :json, {:url => url}
-              yield index
-            end
-          end
-          result
         end
 
         def process_index(content, date)
@@ -167,20 +88,6 @@ module NewsTagger
           end
 
           article
-        end
-
-        def retrieve date
-          result = retrieve_processed_daily_index date do |index|
-            index[:articles].each do |article|
-              retrieve_article article[:url] do |content|
-                normalized_article = process_article article[:url], content
-                puts JSON.pretty_generate normalized_article
-                return
-
-              end
-            end
-          end
-          result
         end
       end
 
