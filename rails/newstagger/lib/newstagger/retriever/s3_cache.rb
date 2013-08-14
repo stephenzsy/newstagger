@@ -11,10 +11,14 @@ module NewsTagger
         @s3_bucket = @s3.buckets[@bucket]
       end
 
-      def retrieve_from_cache topic, url
+      def retrieve_from_cache(topic, url, cache_cutoff = nil)
         s3_key = "#{@prefix}#{topic}/#{Digest::SHA2.hexdigest(url)}"
         s3_obj = @s3_bucket.objects[s3_key]
-        return false unless s3_obj.exists?
+        metadata = s3_obj.metadata
+        return false unless metadata.nil?
+        unless cache_cutoff.nil?
+          return false if Time.parse(metadata[:retrieval_date]) < cache_cutoff
+        end
         content = ''
         s3_obj.read do |chunk|
           content += chunk
