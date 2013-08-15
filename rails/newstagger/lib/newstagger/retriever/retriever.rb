@@ -56,8 +56,8 @@ module NewsTagger
         cutoff_time = get_cache_cutoff_time date
         retrieve_processed_daily_index local_date, cutoff_time do |index|
           index[:articles].each do |article|
-            p article[:url]
             retrieve_processed_article article[:url] do |normalized_article|
+              yield normalized_article
             end
           end
         end
@@ -65,14 +65,16 @@ module NewsTagger
     end
 
     class S3CachedRetriever < Retriever
-      def initialize(topic_vendor)
+      def initialize(topic_vendor, website_version, processor_version)
         super(topic_vendor)
         @cache = NewsTagger::Retriever::S3Cache.new
+        @website_version = website_version
+        @processor_version = processor_version
       end
 
       def retrieve_daily_index(local_date, cutoff_time)
         url = get_daily_index_url local_date
-        result = @cache.retrieve_from_cache("#{@topic_vendor}:daily_index:raw", url, cutoff_time) do |content, metadata={}|
+        result = @cache.retrieve_from_cache("#{@topic_vendor}:daily_index:raw", url, cutoff_time, :retrieval_time) do |content, metadata={}|
           yield content
           return true
         end
@@ -81,8 +83,9 @@ module NewsTagger
             @cache.send_to_cache "#{@topic_vendor}:daily_index:raw", url, content, :html, {
                 :url => url,
                 :local_date => local_date.iso8601,
-                :retrieval_time => Time.now.utc.iso8601(3)
-            }
+                :retrieval_time => Time.now.utc.iso8601(3),
+                :w_version => @website_version
+            }, false
             yield content
           end
         end
@@ -91,7 +94,7 @@ module NewsTagger
 
       def retrieve_processed_daily_index(local_date, cache_cutoff_time)
         url = get_daily_index_url local_date
-        result = @cache.retrieve_from_cache("#{@topic_vendor}:daily_index:processed", url, cache_cutoff_time) do |content, metadata={}|
+        result = @cache.retrieve_from_cache("#{@topic_vendor}:daily_index:processed", url, cache_cutoff_time, :processed_time) do |content, metadata={}|
           yield JSON.parse content, :symbolize_names => true
         end
         unless result
@@ -99,8 +102,9 @@ module NewsTagger
             @cache.send_to_cache "#{@topic_vendor}:daily_index:processed", url, JSON.generate(index), :json, {
                 :url => url,
                 :local_date => local_date.iso8601,
-                :processed_time => Time.now.utc.iso8601(3)
-            }
+                :processed_time => Time.now.utc.iso8601(3),
+                :p_version => @processor_version
+            }, true
             yield index
           end
         end
@@ -116,8 +120,9 @@ module NewsTagger
           result = super(url) do |content|
             @cache.send_to_cache "#{@topic_vendor}:article:raw", url, content, :html, {
                 :url => url,
-                :retrieval_time => Time.now.utc.iso8601(3)
-            }
+                :retrieval_time => Time.now.utc.iso8601(3),
+                :w_version => @website_version
+            }, false
             yield content
           end
         end
@@ -132,8 +137,9 @@ module NewsTagger
           result = super(url) do |normalized_article|
             @cache.send_to_cache "#{@topic_vendor}:article:processed", url, JSON.generate(normalized_article), :json, {
                 :url => url,
-                :processed_time => Time.now.utc.iso8601(3)
-            }
+                :processed_time => Time.now.utc.iso8601(3),
+                :p_version => @processor_version
+            }, true
             yield normalized_article
           end
         end

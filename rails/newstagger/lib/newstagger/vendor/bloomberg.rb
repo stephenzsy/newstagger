@@ -5,8 +5,12 @@ module NewsTagger
   module Vendor
     module Bloomberg
       class Retriever < NewsTagger::Retriever::S3CachedRetriever
+
+        WEBSITE_VERSION = '20130814'
+        PROCESSOR_VERSION = '20130814'
+
         def initialize
-          super 'bloomberg'
+          super 'bloomberg', WEBSITE_VERSION, PROCESSOR_VERSION
         end
 
         def get_daily_index_url(local_date)
