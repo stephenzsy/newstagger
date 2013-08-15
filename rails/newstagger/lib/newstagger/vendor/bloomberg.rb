@@ -4,16 +4,28 @@ require 'cgi'
 module NewsTagger
   module Vendor
     module Bloomberg
-      class Retriever < NewsTagger::Retriever::Retriever
+      class Retriever < NewsTagger::Retriever::S3CachedRetriever
+
+        WEBSITE_VERSION = '20130814'
+        PROCESSOR_VERSION = '20130814'
+
         def initialize
-          super 'bloomberg'
+          super 'bloomberg', WEBSITE_VERSION, PROCESSOR_VERSION
         end
 
-        def get_daily_index_url date
-          "http://www.bloomberg.com/archive/news/#{date.strftime "%Y-%m-%d"}/"
+        def get_daily_index_url(local_date)
+          "http://www.bloomberg.com/archive/news/#{local_date.strftime "%Y-%m-%d"}/"
         end
 
-        def process_index(content, date)
+        def get_local_date(date)
+          date.in_time_zone('America/New_York').midnight
+        end
+
+        def get_cache_cutoff_time(date)
+          get_local_date(date) + 1.day + 15.minutes
+        end
+
+        def process_daily_index(content)
           result = {
               :articles => [],
           }
