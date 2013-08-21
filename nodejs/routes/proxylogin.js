@@ -43,13 +43,25 @@ exports.proxy = function (req, res) {
         return parsed;
     }
 
+    function handleCookie(parsedCookie) {
+        if (parsedCookie['domain'] && !parsedCookie['domain'].match(/\.wsj\.com$/)) {
+            return;
+        }
+
+        console.log(JSON.stringify(parsedCookie));
+    }
+
     function proxyResponseHandler(cres) {
         //console.log('status: ' + cres.statusCode);
         //console.log('headers: ' + JSON.stringify(cres.headers));
-        var setCookieHeaders = cres.headers['set-cookie'];
-        if (setCookieHeaders) {
-            setCookieHeaders.forEach(function (h) {
-                console.log(JSON.stringify(parseSetCookieHeader(h)));
+        if (cres.headers['set-cookie']) {
+            cres.headers['set-cookie'].forEach(function (h) {
+                handleCookie(parseSetCookieHeader(h));
+            });
+        }
+        if (cres.headers['Set-Cookie']) {
+            cres.headers['Set-Cookie'].forEach(function (h) {
+                handleCookie(parseSetCookieHeader(h));
             });
         }
         res.writeHead(cres.statusCode, cres.headers);
@@ -82,6 +94,7 @@ exports.proxy = function (req, res) {
     }
     creq.on('error', function (e) {
         // we got an error, return 500 error to client and log error
+        console.log(e.statusCode);
         console.log(e.message);
         //res.send(500);
         res.end();
