@@ -11,6 +11,7 @@ var url = require('url')
 exports.proxy = function (req, res) {
     //console.log(JSON.stringify(req.headers));
     var parsedUrl = url.parse(req.url);
+    var protocol = parsedUrl['protocol'];
 
     var options = {
         // host to forward to
@@ -26,12 +27,30 @@ exports.proxy = function (req, res) {
     };
     delete req.headers['host'];
     //console.log('requested: ' + options['hostname'] + options['path']);
-    var creq = http.request(options,function (cres) {
+
+    function parseSetCookieHeader(header) {
+        var parts = header.split(/[;]\s*/);
+
+        var parsed = {};
+
+        parts.forEach(function (p) {
+            var eqIndex = p.indexOf('=');
+            var key = p.substring(0, eqIndex);
+            var value = p.substring(eqIndex + 1);
+            parsed[key] = value;
+        });
+
+        return parsed;
+    }
+
+    function proxyResponseHandler(cres) {
         //console.log('status: ' + cres.statusCode);
         //console.log('headers: ' + JSON.stringify(cres.headers));
-        var setCookieHeader = cres.headers['set-cookie'];
-        if (setCookieHeader) {
-            console.log(setCookieHeader);
+        var setCookieHeaders = cres.headers['set-cookie'];
+        if (setCookieHeaders) {
+            setCookieHeaders.forEach(function (h) {
+                console.log(JSON.stringify(parseSetCookieHeader(h)));
+            });
         }
         res.writeHead(cres.statusCode, cres.headers);
 
@@ -53,11 +72,19 @@ exports.proxy = function (req, res) {
             res.end();
         });
 
-    }).on('error', function (e) {
-            // we got an error, return 500 error to client and log error
-            console.log(e.message);
-            //res.send(500);
-            res.end();
-        });
+    }
+
+    var creq = null;
+    if (protocol === 'https') {
+        creq = https.request(options, proxyResponseHandler);
+    } else {
+        creq = http.request(options, proxyResponseHandler);
+    }
+    creq.on('error', function (e) {
+        // we got an error, return 500 error to client and log error
+        console.log(e.message);
+        //res.send(500);
+        res.end();
+    });
     creq.end();
 };
