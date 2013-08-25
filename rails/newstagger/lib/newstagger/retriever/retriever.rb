@@ -20,8 +20,30 @@ module NewsTagger
         raise 'Not Supported'
       end
 
+      def get_additional_headers_for_retrieve()
+        nil
+      end
+
+      def filter_response(response)
+        case response.code
+          when '200'
+          when '302'
+            return {:new_url => response['location']}
+          else
+            p response
+            raise "Fault Retrieve"
+        end
+        nil
+      end
+
       def retrieve_daily_index(local_date, cache_cutoff_time = nil)
-        yield Net::HTTP.get URI(get_daily_index_url(local_date))
+        uri = URI(get_daily_index_url(local_date))
+        response = nil
+        Net::HTTP.start(uri.host, uri.port) do |http|
+          response = http.get(uri.path, get_additional_headers_for_retrieve())
+        end
+        filter_response response
+        yield response.body();
         true
       end
 
@@ -32,7 +54,25 @@ module NewsTagger
       end
 
       def retrieve_article(url)
-        yield Net::HTTP.get(URI(url))
+        while true
+          p url
+          uri = URI(url)
+          response = nil
+          http = Net::HTTP.new(uri.host, uri.port)
+          http.use_ssl = (uri.scheme == 'https')
+          http.start do |http|
+            response = http.get(uri.path, get_additional_headers_for_retrieve())
+          end
+          filter_result = filter_response response
+          unless filter_result.nil?
+            unless filter_result[:new_url].nil?
+              url = filter_result[:new_url]
+              next
+            end
+          end
+          yield response.body();
+          break
+        end
         true
       end
 
