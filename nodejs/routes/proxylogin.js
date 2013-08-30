@@ -71,6 +71,15 @@ exports.proxy = function (req, res) {
             if (parsedCookie['djcs_perm']) {
                 cookies["djcs_perm"] = parsedCookie['djcs_perm'];
             }
+            if (parsedCookie['djcs_info']) {
+                cookies["djcs_info"] = parsedCookie['djcs_info'];
+            }
+            if (parsedCookie['user_type']) {
+                cookies['user_type'] = parsedCookie['user_type'];
+            }
+            if (parsedCookie['djcs_session']) {
+                cookies["djcs_session"] = parsedCookie['djcs_session'];
+            }
             if (cookies['djcs_auto'] && cookies['djcs_perm']) {
                 DynamoDB.putItem({
                     TableName: 'newstagger_state',
@@ -78,11 +87,14 @@ exports.proxy = function (req, res) {
                         "key": {"S": "wsj_cookies"},
                         "value": { "SS": [
                             "djcs_auto=" + cookies["djcs_auto"],
-                            "djcs_perm=" + cookies["djcs_perm"]
+                            "djcs_perm=" + cookies["djcs_perm"],
+                            "user_type=" + cookies["user_type"],
+                            "djcs_session=" + cookies["djcs_session"]     ,
+                            "djcs_info=" + cookies["djcs_info"]
                         ]}
                     }
-                }, function(err, data){
-                    if(err) {
+                }, function (err, data) {
+                    if (err) {
                         console.error(err);
                     }
                 });

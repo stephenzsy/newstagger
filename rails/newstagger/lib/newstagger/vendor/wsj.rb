@@ -124,15 +124,92 @@ module NewsTagger
           current_paragraph
         end
 
+        def validate_all_processed(e, name)
+          e.children.each do |element|
+            case element.type
+              when Nokogiri::XML::Node::TEXT_NODE
+                next if element.text.strip.empty?
+            end
+            raise "Unrecognized #{name} element:\n#{element.inspect()}"
+          end
+          true
+        end
+
         def process_article(url, content)
           doc = Nokogiri::HTML(content)
-          p doc
-          raise 'Need Developer'
 
           article = {
               :url => url,
-              :sections => [],
           }
+          article_start_flag = false
+          article_end_flag = false
+
+          begin
+            parsed_metadata = {}
+            article_headline_box = doc.css('.articleHeadlineBox').first
+            metadata = article_headline_box.css('.cMetadata').first
+            metadata.css('li.articleSection').each do |li|
+              li.css('a').each do |a|
+                parsed_metadata[:article_section] ||= []
+                parsed_metadata[:article_section] << {
+                    :section_url => a.attr('href'),
+                    :section_name => a.text
+                }
+                a.remove
+              end
+              li.remove if li.children.empty?
+            end
+            metadata.css('li.dateStamp').each do |li|
+              parsed_metadata[:date_stamp] = Time.parse(li.text()).strftime "%Y-%m-%d"
+              li.remove
+            end
+            article[:metadata] = parsed_metadata
+            metadata.remove if validate_all_processed metadata, '.cMetadata'
+            article_headline_box.children.each do |element|
+              case element.type
+                when Nokogiri::XML::Node::COMMENT_NODE
+                  element.content.strip.split("\n").each do |comment_line|
+                    case comment_line
+                      when /([^\s:]+):(.*)/
+                        parsed_metadata[:properties] ||= []
+                        parsed_metadata[:properties] << {
+                            :key => $~[1],
+                            :value => $~[2]
+                        }
+                      when /CODE=(\S*) SYMBOL=(\S*)/
+                        parsed_metadata[:codes] ||= []
+                        parsed_metadata[:codes] << {
+                            :codes => $~[1],
+                            :symbol => $~[2]
+                        }
+                      when 'article start'
+                        article_start_flag = true
+                      else
+                        raise("Unrecognized comment in .articleHeadlineBox:\n#{comment_line}")
+                    end
+                  end
+                  element.remove
+              end
+            end
+            article_headline_box.css('h1').each do |h1|
+              article[:title] = h1.text.strip
+              h1.remove
+            end
+            article_headline_box.css('h2.subhead').each do |h2|
+              article[:subtitle] = h2.text.strip
+              h2.remove
+            end
+            article_headline_box.remove if validate_all_processed article_headline_box, '.articleHeadlineBox'
+          end
+
+          article_story_body = doc.css("#article_story_body").first
+          article_story_body.css(".articlePage").each do |article_page|
+            article_page.remove if validate_all_processed article_page, '.articlePage'
+          end
+
+          p article
+          raise 'Need Developer'
+
 
           primary_content = doc.css('#content #primary_content').first
           story_head = primary_content.css('#story_head').first
