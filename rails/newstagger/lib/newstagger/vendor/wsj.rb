@@ -66,62 +66,7 @@ module NewsTagger
 
         def get_additional_headers_for_retrieve
           cookies_header = {"Cookie" => @cookies.join("; ")}
-          p cookies_header
           cookies_header
-        end
-
-        def parse_html_text_block(node, article)
-          return nil if ['decoration-top', 'decoration'].include? node['class']
-          t = ''
-          current_paragraph = {}
-          node.children.each do |n|
-            if n.type== Nokogiri::XML::Node::TEXT_NODE
-              t << n.text
-              next
-            end
-            case n.name
-              when 'p'
-                current_paragraph[:sub_paragraphs] ||= []
-                current_paragraph[:sub_paragraphs] << parse_html_text_block(n, article)
-              when 'a'
-                if n['class'] == 'web_ticker'
-                  t << n.text
-                  current_paragraph[:tickers] ||= []
-                  if n['ticker'].nil?
-                    current_paragraph[:tickers] << /^\/quote\/(.*)$/.match(n['href'])[1]
-                  else
-                    current_paragraph[:tickers] << n['ticker']
-                  end
-                elsif n['href'].start_with? 'http://topics.bloomberg.com/'
-                  t << n.text
-                  current_paragraph[:topics] ||= []
-                  current_paragraph[:topics] << URI.parse(n['href']).path.gsub(/^\//, '').gsub(/\/$/, '')
-                elsif n['href'].start_with? 'http://search.bloomberg.com/search'
-                  t << n.text
-                  current_paragraph[:searches] ||= []
-                  current_paragraph[:searches] << CGI.parse(URI.parse(n['href']).query)['q']
-                elsif n['href'].start_with? 'mailto:'
-                  t << n.text
-                  article[:emails] ||= []
-                  article[:emails] << n['href'].gsub(/^mailto:/, '')
-                else
-                  t << n.text
-                  current_paragraph[:links] ||= []
-                  current_paragraph[:links] << n['href']
-                end
-              when 'span', 'b', 'strong', 'em'
-                t << n.text
-              when 'br'
-                t << ' '
-              when 'i', 'img'
-                next t << ' '
-              else
-                p n
-                raise 'unrecognized condition'
-            end
-          end
-          current_paragraph[:text] = t.strip.gsub("\n", ' ').squeeze(' ')
-          current_paragraph
         end
 
         def validate_all_processed(e, name)
@@ -133,6 +78,161 @@ module NewsTagger
             raise "Unrecognized #{name} element:\n#{element.inspect()}"
           end
           true
+        end
+
+        def process_paragraph(node)
+          case node.name
+            when 'ul'
+              results = []
+              node.css('li').each do |li|
+                results << process_paragraph(li)
+                li.remove if validate_all_processed li, 'ul > li'
+              end
+              return results
+            when 'a'
+              if not node.has_attribute? 'href' and node.has_attribute? 'name'
+                result = {:anchor => node.attr('name')}
+                node.remove
+                return result
+              end
+          end
+          texts = []
+          result = {
+              :emails => [],
+              :quotes => [],
+              :links => []
+          }
+          node.children.each do |element|
+            if element.type == Nokogiri::XML::Node::TEXT_NODE
+              texts << element.text.strip
+              element.remove
+              next
+            end
+
+            case element.name
+              when 'strong', 'em'
+                texts << element.text.strip
+                element.remove
+              when 'br'
+                texts << "\n"
+                element.remove
+              when 'a'
+                texts << element.text.strip
+                a_url = element.attr('href')
+                case a_url
+                  when /^mailto:(.*)/
+                    result[:emails] << $~[1]
+                    element.remove
+                  when /^\/public\/quotes\/main\.html\?type=(?<type>\w+)&symbol=(?<symbol>[\w\.:-]+)$/
+                    result[:quotes] << {
+                        :type => $~[:type],
+                        :symbol => $~[:symbol]
+                    }
+                    element.remove
+                  when /^https?:\/\//
+                    # public link
+                    result[:links] << a_url
+                    element.remove
+                end
+              when 'span'
+                if element.has_attribute? 'data-widget'
+                  element.remove
+                  next
+                end
+                r = process_paragraph element
+                if r.is_a? String
+                  text << r
+                else
+                  r.each do |k, v|
+                    case k
+                      when :text
+                        texts << v
+                      else
+                        result[k] = result[k] + v
+                    end
+                  end
+                end
+                element.remove
+            end
+          end
+          text = texts.join(' ').squeeze(' ')
+          result.reject! { |k, v| v.empty? }
+          result[:text] = text unless text.empty?
+          result
+        end
+
+        def process_social_by_line(social_by_line)
+          result = []
+          social_by_line.css('li.connect').remove
+          social_by_line.css('cite').each do |cite|
+            cite.children.each do |element|
+              if element.text?
+                result << element.text.strip
+                element.remove
+              end
+            end
+            cite.remove if validate_all_processed cite, '.socialByline > cite'
+          end
+          social_by_line.css('li.byName').each do |li|
+            columnist = {}
+            li.attributes.each do |name, value|
+              case name
+                when 'class'
+                  next
+                when 'data-dj-author-topicserviceid'
+                  columnist[:author_topicserviceid] = li.attr(name) unless li.attr(name).nil? or li.attr(name).empty?
+                else
+                  raise "Unrecongized Attribute in li:\n#{li.inspect}"
+              end
+            end
+            li.css('a').each do |a|
+              url = a.attr('href')
+              if url.start_with? 'http://topics.wsj.com/person'
+                columnist[:url] = url
+                columnist[:name] = a.text.strip
+                a.remove
+              end
+            end
+            li.children.each do |element|
+              if element.text?
+                columnist[:name] = element.text.strip
+                element.remove
+              end
+            end
+            result << columnist
+            li.remove if validate_all_processed li, 'li.byName'
+          end
+          social_by_line.css('li').each do |li|
+            fw_sibling = li.next_sibling
+            location = nil
+            if fw_sibling.text?
+              case fw_sibling.text.strip
+                when /in (.*) and/, /in (.*)/
+                  location = $~[1]
+              end
+              fw_sibling.remove
+            end
+            if location.nil?
+              result << li.text
+            else
+              result << {
+                  :name => li.text,
+                  :location => location
+              }
+            end
+            li.remove
+          end
+          social_by_line.children.each do |element|
+            if element.text?
+              element.text.split("\n").each do |line|
+                t = line.strip.downcase
+                raise "Unrecognized .socialByline element:\n#{element.inspect}\n#{t.inspect}" unless t.empty? or t == 'by' or t == 'and'
+              end
+              element.remove
+            end
+          end
+          return nil if result.empty?
+          result
         end
 
         def process_article(url, content)
@@ -152,10 +252,17 @@ module NewsTagger
               li.css('a').each do |a|
                 parsed_metadata[:article_section] ||= []
                 parsed_metadata[:article_section] << {
-                    :section_url => a.attr('href'),
-                    :section_name => a.text
+                    :url => a.attr('href'),
+                    :name => a.text
                 }
                 a.remove
+              end
+              li.children.each do |element|
+                if element.text?
+                  parsed_metadata[:article_section] ||= []
+                  parsed_metadata[:article_section] << element.text
+                  element.remove
+                end
               end
               li.remove if li.children.empty?
             end
@@ -199,89 +306,68 @@ module NewsTagger
               article[:subtitle] = h2.text.strip
               h2.remove
             end
+            article_headline_box.css('h5').each do |h|
+              article[:other_heads] ||= []
+              article[:other_heads] << {
+                  :head=> h.text.strip,
+                  :level => /h(\d+)/.match(h.name)[1]
+              }
+              h.remove
+            end
+            article_headline_box.css('.columnist').each do |columnist|
+              columnist.css('.columnistByline').each do |columnist_by_line|
+                columnist_by_line.css('.socialByline').each do |social_by_line|
+                  by = process_social_by_line social_by_line
+                  article[:by] = by unless by.nil?
+                  social_by_line.remove if validate_all_processed social_by_line, '.columnist .social_by_line'
+                end
+                columnist_by_line.remove if validate_all_processed columnist_by_line, '.columnist_by_line'
+              end
+              columnist.children.each do |element|
+                if element.text?
+                  element.remove if element.text.strip == '-'
+                end
+              end
+              columnist.css('.icon').remove
+              columnist.remove if validate_all_processed columnist, '.columnist'
+            end
             article_headline_box.remove if validate_all_processed article_headline_box, '.articleHeadlineBox'
           end
 
           article_story_body = doc.css("#article_story_body").first
           article_story_body.css(".articlePage").each do |article_page|
+            article_page.css('ul.socialByline').each do |social_by_line|
+              by = process_social_by_line social_by_line
+              article[:by] = by unless by.nil?
+              social_by_line.remove if validate_all_processed social_by_line, '.socialByline'
+            end
+            article_page.children.filter('p, h4, h5, h6, ul, a, blockquote').each do |node|
+              paragraph = process_paragraph node
+              article[:paragraphs] ||= []
+              article[:paragraphs] << paragraph unless paragraph.nil?
+              node.remove if validate_all_processed node, '.articlePage > p'
+            end
+            article_page.children.filter('cite').each do |cite|
+              article[:cites] ||= []
+              article[:cites] << cite.text
+              cite.remove
+            end
+            article_page.css('.insetContent', '.insetCol3wide', '.insetCol6wide', '.legacyInset').remove
+            article_page.children.each do |element|
+              if element.comment?
+                if element.content.strip == 'article end'
+                  article_end_flag = true
+                  element.remove
+                  next
+                end
+              end
+            end
+
             article_page.remove if validate_all_processed article_page, '.articlePage'
           end
 
-          p article
-          raise 'Need Developer'
+          raise "Improper article start/end flag: start(#{article_start_flag}), end(#{article_end_flag})" unless article_start_flag and article_end_flag
 
-
-          primary_content = doc.css('#content #primary_content').first
-          story_head = primary_content.css('#story_head').first
-          article[:title] = story_head.css('h1').text.strip
-          story_meta = story_head.css('#story_meta').first
-          if story_meta.nil?
-            story_meta = story_head.css('.bview_story_meta').first if story_meta.nil?
-            article[:by] ||= []
-            story_meta.css('.author').each do |element|
-              article[:by] << element.text.strip
-            end
-            story_meta.css('span').each do |element|
-              article[:by] << element.text.strip if element['class'].nil? or element['class'] == 'last'
-            end
-          else
-            byline = story_meta.css('.byline').first
-            article[:by] ||= []
-            byline.css('span').each do |element|
-              article[:by] << element.text.strip if element['class'].nil? or element['class'] == 'last'
-            end
-          end
-          article[:timestamp] = Time.at(story_meta.css('.datestamp').first['epoch'].to_i / 1000).utc.iso8601
-          story_display = primary_content.css("#story_content #story_display").first
-          current_section = {
-              :title => '',
-              :paragraphs => []
-          }
-          has_content = false
-          story_display.children.each do |node|
-            next if node.type == Nokogiri::XML::Node::TEXT_NODE
-            case node.name
-              when 'script',
-                  'br',
-                  'i', 'img'
-                next
-              when 'div'
-                # TODO: related
-                next
-              when 'ol', 'ul'
-                list = []
-                node.css('li').each do |element|
-                  list << parse_html_text_block(element, article)
-                end
-                current_section[:paragraphs] << list
-                has_content = true
-              when 'blockquote', 'em'
-                node.css('p').each do |n|
-                  current_section[:paragraphs] << parse_html_text_block(n, article)
-                  has_content = true
-                end
-              when 'p', 'b'
-                current_section[:paragraphs] << parse_html_text_block(node, article)
-                has_content = true
-              when 'h2'
-                article[:sections] << current_section
-                current_section = {
-                    :title => node.text.strip,
-                    :paragraphs => []
-                }
-                has_content = true
-              when 'pre'
-                current_section[:paragraphs] << {
-                    :text => node.text
-                }
-              else
-                p node if node['class'].nil?
-                next if node['class'] == 'decoration-bottom' or node['class'].include? 'mt-enclosure'
-                p node
-                raise 'unrecognized condition'
-            end
-          end
-          article[:sections] << current_section if has_content
           article
         end
       end
