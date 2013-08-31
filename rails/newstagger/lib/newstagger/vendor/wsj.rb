@@ -144,7 +144,7 @@ module NewsTagger
                 end
                 r = process_paragraph element
                 if r.is_a? String
-                  text << r
+                  texts << r
                 else
                   r.each do |k, v|
                     case k
