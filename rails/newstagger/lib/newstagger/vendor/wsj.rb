@@ -81,6 +81,11 @@ module NewsTagger
         end
 
         def process_paragraph(node)
+          result = {
+              :emails => [],
+              :quotes => [],
+              :links => []
+          }
           case node.name
             when 'ul'
               results = []
@@ -95,13 +100,11 @@ module NewsTagger
                 node.remove
                 return result
               end
+            when /h(\d+)/
+              result[:head_level] = $~[1]
           end
+
           texts = []
-          result = {
-              :emails => [],
-              :quotes => [],
-              :links => []
-          }
           node.children.each do |element|
             if element.type == Nokogiri::XML::Node::TEXT_NODE
               texts << element.text.strip
@@ -129,7 +132,7 @@ module NewsTagger
                         :symbol => $~[:symbol]
                     }
                     element.remove
-                  when /^https?:\/\//
+                  when /^https?:\/\//, /^#/
                     # public link
                     result[:links] << a_url
                     element.remove
@@ -157,8 +160,26 @@ module NewsTagger
           end
           text = texts.join(' ').squeeze(' ')
           result.reject! { |k, v| v.empty? }
+          return text if result.empty?
           result[:text] = text unless text.empty?
           result
+        end
+
+        def process_social_by_line_element(element)
+          result = nil
+          if element.text?
+            result = element.text.strip
+            element.remove
+          elsif element.name == 'li'
+            element.children.each do |li|
+              unless result.nil?
+                raise "Unsupported .socialByline Element:\n#{element.inspect}"
+              end
+              result = process_social_by_line_element li
+            end
+            element.remove if validate_all_processed element, '.socialByline li'
+          end
+          return result
         end
 
         def process_social_by_line(social_by_line)
@@ -166,10 +187,8 @@ module NewsTagger
           social_by_line.css('li.connect').remove
           social_by_line.css('cite').each do |cite|
             cite.children.each do |element|
-              if element.text?
-                result << element.text.strip
-                element.remove
-              end
+              r = process_social_by_line_element element
+              result << r
             end
             cite.remove if validate_all_processed cite, '.socialByline > cite'
           end
@@ -202,10 +221,11 @@ module NewsTagger
             result << columnist
             li.remove if validate_all_processed li, 'li.byName'
           end
+          # text only by line
           social_by_line.css('li').each do |li|
             fw_sibling = li.next_sibling
             location = nil
-            if fw_sibling.text?
+            if fw_sibling and fw_sibling.text?
               case fw_sibling.text.strip
                 when /in (.*) and/, /in (.*)/
                   location = $~[1]
@@ -226,7 +246,13 @@ module NewsTagger
             if element.text?
               element.text.split("\n").each do |line|
                 t = line.strip.downcase
-                raise "Unrecognized .socialByline element:\n#{element.inspect}\n#{t.inspect}" unless t.empty? or t == 'by' or t == 'and'
+                case t
+                  when '', 'by', 'and'
+                  when /by .*/
+                    result << line.strip.match(/by (.*)/i)[1].strip
+                  else
+                    raise "Unrecognized .socialByline element:\n#{element.inspect}\n#{t.inspect}"
+                end
               end
               element.remove
             end
@@ -244,9 +270,12 @@ module NewsTagger
           article_start_flag = false
           article_end_flag = false
 
-          begin
-            parsed_metadata = {}
-            article_headline_box = doc.css('.articleHeadlineBox').first
+
+          parsed_metadata = {}
+          article_headline_box = doc.css('.articleHeadlineBox').first
+          if article_headline_box.nil?
+            article[:_no_head] = true
+          else
             metadata = article_headline_box.css('.cMetadata').first
             metadata.css('li.articleSection').each do |li|
               li.css('a').each do |a|
@@ -309,7 +338,7 @@ module NewsTagger
             article_headline_box.css('h5').each do |h|
               article[:other_heads] ||= []
               article[:other_heads] << {
-                  :head=> h.text.strip,
+                  :head => h.text.strip,
                   :level => /h(\d+)/.match(h.name)[1]
               }
               h.remove
@@ -335,38 +364,43 @@ module NewsTagger
           end
 
           article_story_body = doc.css("#article_story_body").first
-          article_story_body.css(".articlePage").each do |article_page|
-            article_page.css('ul.socialByline').each do |social_by_line|
-              by = process_social_by_line social_by_line
-              article[:by] = by unless by.nil?
-              social_by_line.remove if validate_all_processed social_by_line, '.socialByline'
-            end
-            article_page.children.filter('p, h4, h5, h6, ul, a, blockquote').each do |node|
-              paragraph = process_paragraph node
-              article[:paragraphs] ||= []
-              article[:paragraphs] << paragraph unless paragraph.nil?
-              node.remove if validate_all_processed node, '.articlePage > p'
-            end
-            article_page.children.filter('cite').each do |cite|
-              article[:cites] ||= []
-              article[:cites] << cite.text
-              cite.remove
-            end
-            article_page.css('.insetContent', '.insetCol3wide', '.insetCol6wide', '.legacyInset').remove
-            article_page.children.each do |element|
-              if element.comment?
-                if element.content.strip == 'article end'
-                  article_end_flag = true
-                  element.remove
-                  next
+          if article_story_body.nil?
+            article[:_no_body] = true
+          else
+            article_story_body.css(".articlePage").each do |article_page|
+              article_page.css('ul.socialByline').each do |social_by_line|
+                by = process_social_by_line social_by_line
+                article[:by] = by unless by.nil?
+                social_by_line.remove if validate_all_processed social_by_line, '.socialByline'
+              end
+              article_page.children.filter('p, h4, h5, h6, ul, a, blockquote').each do |node|
+                paragraph = process_paragraph node
+                article[:paragraphs] ||= []
+                article[:paragraphs] << paragraph unless paragraph.nil?
+                node.remove if validate_all_processed node, '.articlePage > p'
+              end
+              article_page.children.filter('cite').each do |cite|
+                article[:cites] ||= []
+                article[:cites] << cite.text
+                cite.remove
+              end
+              article_page.css('.insetContent', '.insetCol3wide', '.insetCol6wide', '.legacyInset').remove
+              article_page.children.each do |element|
+                if element.comment?
+                  if element.content.strip == 'article end'
+                    article_end_flag = true
+                    element.remove
+                    next
+                  end
                 end
               end
-            end
 
-            article_page.remove if validate_all_processed article_page, '.articlePage'
+              article_page.remove if validate_all_processed article_page, '.articlePage'
+            end
           end
 
-          raise "Improper article start/end flag: start(#{article_start_flag}), end(#{article_end_flag})" unless article_start_flag and article_end_flag
+          raise "Improper article start/end flag: start(#{article_start_flag}), end(#{article_end_flag})" unless (article_start_flag and article_end_flag) or
+              (article[:_no_head] and article[:_no_body])
 
           article
         end
