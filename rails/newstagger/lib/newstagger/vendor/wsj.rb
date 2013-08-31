@@ -132,8 +132,8 @@ module NewsTagger
                         :symbol => $~[:symbol]
                     }
                     element.remove
-                  when /^https?:\/\//, /^#/
-                    # public link
+                  else
+                    # arbitrary link
                     result[:links] << a_url
                     element.remove
                 end
@@ -302,29 +302,32 @@ module NewsTagger
             article[:metadata] = parsed_metadata
             metadata.remove if validate_all_processed metadata, '.cMetadata'
             article_headline_box.children.each do |element|
-              case element.type
-                when Nokogiri::XML::Node::COMMENT_NODE
-                  element.content.strip.split("\n").each do |comment_line|
-                    case comment_line
-                      when /([^\s:]+):(.*)/
-                        parsed_metadata[:properties] ||= []
-                        parsed_metadata[:properties] << {
-                            :key => $~[1],
-                            :value => $~[2]
-                        }
-                      when /CODE=(\S*) SYMBOL=(\S*)/
-                        parsed_metadata[:codes] ||= []
-                        parsed_metadata[:codes] << {
-                            :codes => $~[1],
-                            :symbol => $~[2]
-                        }
-                      when 'article start'
-                        article_start_flag = true
-                      else
-                        raise("Unrecognized comment in .articleHeadlineBox:\n#{comment_line}")
-                    end
+              if element.comment?
+                element.content.strip.split("\n").each do |comment_line|
+                  case comment_line
+                    when /([^\s:]+):(.*)/
+                      parsed_metadata[:properties] ||= []
+                      parsed_metadata[:properties] << {
+                          :key => $~[1],
+                          :value => $~[2]
+                      }
+                    when /CODE=(\S*) SYMBOL=(\S*)/
+                      parsed_metadata[:codes] ||= []
+                      parsed_metadata[:codes] << {
+                          :codes => $~[1],
+                          :symbol => $~[2]
+                      }
+                    when 'article start'
+                      article_start_flag = true
+                    else
+                      raise("Unrecognized comment in .articleHeadlineBox:\n#{comment_line}")
                   end
-                  element.remove
+                end
+                element.remove
+              elsif element.name == 'a' and element.has_attribute?('name')
+                parsed_metadata[:anchors] ||= []
+                parsed_metadata[:anchors] << element.attr('name')
+                element.remove
               end
             end
             article_headline_box.css('h1').each do |h1|
