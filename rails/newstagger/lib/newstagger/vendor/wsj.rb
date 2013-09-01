@@ -88,12 +88,12 @@ module NewsTagger
           }
           case node.name
             when 'ul'
-              results = []
+              result = []
               node.css('li').each do |li|
-                results << process_paragraph(li)
+                result << process_paragraph(li)
                 li.remove if validate_all_processed li, 'ul > li'
               end
-              return results
+              return result
             when 'a'
               if not node.has_attribute? 'href' and node.has_attribute? 'name'
                 result = {:anchor => node.attr('name')}
@@ -113,6 +113,10 @@ module NewsTagger
             end
 
             case element.name
+              when 'p'
+                result[:sub_paragraphs] ||= []
+                result[:sub_paragraphs] << process_paragraph(element)
+                element.remove if validate_all_processed element, 'p > p'
               when 'strong', 'em'
                 texts << element.text.strip
                 element.remove
@@ -137,8 +141,13 @@ module NewsTagger
                     result[:links] << a_url
                     element.remove
                 end
+              when 'cite'
+                result[:cites] ||= []
+                result[:cites] << process_paragraph(element)
+                element.remove if validate_all_processed element, 'p > cite'
               when 'span'
-                if element.has_attribute? 'data-widget'
+                if (element.has_attribute? 'class' and element.attr('class').split(' ').include? 'quo') or
+                    (element.has_attribute? 'data-widget')
                   element.remove
                   next
                 end
@@ -261,6 +270,35 @@ module NewsTagger
           result
         end
 
+        def process_head_comments(comment, metadata)
+          article_start_flag = false
+          comment.content.split("\n").each do |comment_line|
+            case comment_line.strip
+              when /([^\s:]+):(.*)/
+                metadata[:properties] ||= []
+                metadata[:properties] << {
+                    :key => $~[1],
+                    :value => $~[2]
+                }
+              when /CODE=(\S*) SYMBOL=(\S*)/
+                metadata[:codes] ||= []
+                metadata[:codes] << {
+                    :codes => $~[1],
+                    :symbol => $~[2]
+                }
+              #TODO: handle new type of comments
+              when 'article start'
+                article_start_flag = true
+              else
+                raise("Unrecognized comment in .articleHeadlineBox:\n#{comment_line}")
+            end
+          end
+          {
+              :article_start_flag => article_start_flag
+          }
+        end
+
+
         def process_article(url, content)
           doc = Nokogiri::HTML(content)
 
@@ -303,26 +341,8 @@ module NewsTagger
             metadata.remove if validate_all_processed metadata, '.cMetadata'
             article_headline_box.children.each do |element|
               if element.comment?
-                element.content.strip.split("\n").each do |comment_line|
-                  case comment_line
-                    when /([^\s:]+):(.*)/
-                      parsed_metadata[:properties] ||= []
-                      parsed_metadata[:properties] << {
-                          :key => $~[1],
-                          :value => $~[2]
-                      }
-                    when /CODE=(\S*) SYMBOL=(\S*)/
-                      parsed_metadata[:codes] ||= []
-                      parsed_metadata[:codes] << {
-                          :codes => $~[1],
-                          :symbol => $~[2]
-                      }
-                    when 'article start'
-                      article_start_flag = true
-                    else
-                      raise("Unrecognized comment in .articleHeadlineBox:\n#{comment_line}")
-                  end
-                end
+                r = process_head_comments element, parsed_metadata
+                article_start_flag = true if r[:article_start_flag]
                 element.remove
               elsif element.name == 'a' and element.has_attribute?('name')
                 parsed_metadata[:anchors] ||= []

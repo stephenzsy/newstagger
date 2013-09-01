@@ -28,7 +28,8 @@ namespace :newstagger do
 
       retriever = NewsTagger::Vendor::WSJ::Retriever.new
       #t = Time.new(2009, 4, 1).utc
-      t = Time.new(2009, 4, 3).utc
+      t = Time.new(2009, 4, 7).utc
+      #t = Time.new(2013, 8, 31).utc
       until t >= Time.now do
         puts "Day begin #{t.iso8601}"
         count = 0
@@ -36,8 +37,8 @@ namespace :newstagger do
           count += 1
           puts "#{t.strftime("%Y-%m-%d")}:#{count}P: #{document[:url]}"
         end
-        t += 1.day
         puts "Day done #{t.iso8601}"
+        t += 1.day
       end
 
     end
