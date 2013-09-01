@@ -272,27 +272,39 @@ module NewsTagger
 
         def process_head_comments(comment, metadata)
           article_start_flag = false
-          comment.content.split("\n").each do |comment_line|
-            case comment_line.strip
-              when /([^\s:]+):(.*)/
-                metadata[:properties] ||= []
-                metadata[:properties] << {
-                    :key => $~[1],
-                    :value => $~[2]
-                }
-              when /CODE=(\S*) SYMBOL=(\S*)/
-                metadata[:codes] ||= []
-                metadata[:codes] << {
-                    :codes => $~[1],
-                    :symbol => $~[2]
-                }
-              #TODO: handle new type of comments
-              when 'article start'
-                article_start_flag = true
-              else
-                raise("Unrecognized comment in .articleHeadlineBox:\n#{comment_line}")
+          comment_lines = comment.content.split("\n")
+          if comment_lines.length > 1
+            comment_lines.each do |comment_line|
+              case comment_line.strip
+                when /CODE=(\S*) SYMBOL=(\S*)/
+                  metadata[:codes] ||= []
+                  metadata[:codes] << {
+                      :codes => $~[1],
+                      :symbol => $~[2]
+                  }
+                #TODO: handle new type of comments
+                else
+                  raise("Unrecognized comment in .articleHeadlineBox:\n#{comment_line}")
+              end
+            end
+          else
+            comment_lines.each do |comment_line|
+              comment_line.strip!
+              case comment_line
+                when /([^\s:]+):(.*)/
+                  metadata[:properties] ||= []
+                  metadata[:properties] << {
+                      :key => $~[1],
+                      :value => $~[2]
+                  }
+                when 'article start'
+                  article_start_flag = true
+                else
+                  raise("Unrecognized comment in .articleHeadlineBox:\n#{comment_line}")
+              end
             end
           end
+
           {
               :article_start_flag => article_start_flag
           }
