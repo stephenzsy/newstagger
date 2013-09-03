@@ -1,4 +1,5 @@
 require 'aws-sdk'
+require 'timeout'
 
 # Override to use Signature Version 4
 module AWS
@@ -33,12 +34,15 @@ module NewsTagger
         @s3 = AWS::S3.new :access_key_id => config[:access_key_id],
                           :secret_access_key => config[:secret_access_key],
                           :region => cache_config[:region],
-                          :logger => nil
+                          #:logger => nil
+                          # :http_wire_trace => true,
+                          :http_open_timeout => 5
         @s3_client = @s3.client
       end
 
       def retrieve_from_cache(topic, url, cache_cutoff = nil, cache_cutoff_key = nil)
         s3_key = "#{@prefix}#{topic}/#{Digest::SHA2.hexdigest(url)}"
+        p s3_key
         begin
           response = @s3_client.get_object :bucket_name => @bucket, :key => s3_key
           content = response[:data]
@@ -65,13 +69,29 @@ module NewsTagger
         end
         s3_key = "#{@prefix}#{topic}/#{Digest::SHA2.hexdigest(url)}"
         begin
-          @s3_client.put_object :bucket_name => @bucket,
-                                :key => s3_key,
-                                :data => content,
-                                :content_length => content.bytesize,
-                                :storage_class => reduced_redundancy ? 'REDUCED_REDUNDANCY' : 'STANDARD',
-                                :content_type => content_type,
-                                :metadata => metadata
+          # @s3.buckets[@bucket].objects[s3_key].write(content, :storage_class => reduced_redundancy ? 'REDUCED_REDUNDANCY' : 'STANDARD',
+          #                                           :content_type => content_type,
+          #                                          :metadata => metadata)
+          1.upto(5) do |i|
+            begin
+              puts "send: #{s3_key}"
+              timeout(5) do
+                @s3.client.put_object :bucket_name => @bucket,
+                                      :key => s3_key,
+                                      :data => content,
+                                      :storage_class => reduced_redundancy ? 'REDUCED_REDUNDANCY' : 'STANDARD',
+                                      :content_type => content_type,
+                                      :metadata => metadata
+              end
+              puts "sent: #{s3_key}"
+
+            rescue TimeoutError => te
+              raise te if i > 3
+              next
+            end
+            break
+          end
+
         rescue Exception => e
           raise e
         end

@@ -103,6 +103,13 @@ module NewsTagger
             when /h(\d+)/
               result[:head_level] = $~[1]
           end
+          if node.has_attribute? 'class'
+            classes = node.attr('class').split(' ')
+            if classes.include? 'articleVersion'
+              result[:tags] ||= []
+              result[:tags] << 'articleVersion'
+            end
+          end
 
           texts = []
           node.children.each do |element|
@@ -145,7 +152,7 @@ module NewsTagger
                 result[:cites] ||= []
                 result[:cites] << process_paragraph(element)
                 element.remove if validate_all_processed element, 'p > cite'
-              when 'span'
+              when 'span', 'no'
                 if (element.has_attribute? 'class' and element.attr('class').split(' ').include? 'quo') or
                     (element.has_attribute? 'data-widget')
                   element.remove
@@ -191,17 +198,20 @@ module NewsTagger
           return result
         end
 
-        def process_social_by_line(social_by_line)
-          result = []
-          social_by_line.css('li.connect').remove
-          social_by_line.css('cite').each do |cite|
-            cite.children.each do |element|
-              r = process_social_by_line_element element
-              result << r
+        def handle_by_li(li)
+          fw_sibling = li.next_sibling
+          location = nil
+          if fw_sibling and fw_sibling.text?
+            case fw_sibling.text.strip
+              when /in (.*) and/, /in (.*),?/
+                location = $~[1]
             end
-            cite.remove if validate_all_processed cite, '.socialByline > cite'
+            fw_sibling.remove
           end
-          social_by_line.css('li.byName').each do |li|
+
+          author = nil
+
+          if li.has_attribute? 'class' and li.attr("class").split(" ").include? 'byName'
             columnist = {}
             li.attributes.each do |name, value|
               case name
@@ -227,29 +237,39 @@ module NewsTagger
                 element.remove
               end
             end
-            result << columnist
-            li.remove if validate_all_processed li, 'li.byName'
-          end
-          # text only by line
-          social_by_line.css('li').each do |li|
-            fw_sibling = li.next_sibling
-            location = nil
-            if fw_sibling and fw_sibling.text?
-              case fw_sibling.text.strip
-                when /in (.*) and/, /in (.*)/
-                  location = $~[1]
+            author = columnist
+          else
+            li.children.each do |element|
+              if element.text?
+                author = element.text.strip
+                element.remove
               end
-              fw_sibling.remove
             end
-            if location.nil?
-              result << li.text
-            else
-              result << {
-                  :name => li.text,
-                  :location => location
-              }
+          end
+
+          unless location.nil?
+            return {
+                :name => author,
+                :location => location
+            }
+          end
+
+          author
+        end
+
+        def process_social_by_line (social_by_line)
+          result = []
+          social_by_line.css('li.connect').remove
+          social_by_line.css('cite').each do |cite|
+            cite.children.each do |element|
+              r = process_social_by_line_element element
+              result << r
             end
-            li.remove
+            cite.remove if validate_all_processed cite, '.socialByline > cite'
+          end
+          social_by_line.css('li').each do |li|
+            result << handle_by_li(li)
+            li.remove if validate_all_processed li, 'li'
           end
           social_by_line.children.each do |element|
             if element.text?
@@ -270,22 +290,53 @@ module NewsTagger
           result
         end
 
+        def handle_indented(level, lines)
+          result = []
+          until lines.empty?
+            line = lines.first
+            m = /^(\s*)(\S.*)?/.match(line)
+            indent_length = m[1].size
+            line = m[2]
+            if indent_length > level
+              result << handle_indented(indent_length, lines)
+            elsif indent_length == level
+              unless line.nil? or line.empty?
+                result << line
+              end
+              lines.shift
+            else
+              break
+            end
+          end
+          result.reject! { |e| e.nil? or e.empty? }
+          result
+        end
+
         def process_head_comments(comment, metadata)
           article_start_flag = false
           comment_lines = comment.content.split("\n")
           if comment_lines.length > 1
-            comment_lines.each do |comment_line|
-              case comment_line.strip
-                when /CODE=(\S*) SYMBOL=(\S*)/
-                  metadata[:codes] ||= []
-                  metadata[:codes] << {
-                      :codes => $~[1],
-                      :symbol => $~[2]
-                  }
-                #TODO: handle new type of comments
-                else
-                  raise("Unrecognized comment in .articleHeadlineBox:\n#{comment_line}")
+            # multiline comment
+            until comment_lines.empty?
+              line = comment_lines.first
+              if line.empty?
+                comment_lines.shift
+                next
               end
+
+              if line.match /^CODE=(\S*) SYMBOL=(\S*)/
+                metadata[:codes] ||= []
+                metadata[:codes] << {
+                    :code => $~[1],
+                    :symbol => $~[2]
+                }
+                comment_lines.shift
+                next
+              end
+
+              metadata[:other] ||= []
+              metadata[:other] << handle_indented(0, comment_lines)
+
             end
           else
             comment_lines.each do |comment_line|
@@ -326,31 +377,33 @@ module NewsTagger
           if article_headline_box.nil?
             article[:_no_head] = true
           else
-            metadata = article_headline_box.css('.cMetadata').first
-            metadata.css('li.articleSection').each do |li|
-              li.css('a').each do |a|
-                parsed_metadata[:article_section] ||= []
-                parsed_metadata[:article_section] << {
-                    :url => a.attr('href'),
-                    :name => a.text
-                }
-                a.remove
-              end
-              li.children.each do |element|
-                if element.text?
+            article_headline_box.css('.cMetadata').each do |metadata|
+              metadata.css('li.articleSection').each do |li|
+                li.css('a').each do |a|
                   parsed_metadata[:article_section] ||= []
-                  parsed_metadata[:article_section] << element.text
-                  element.remove
+                  parsed_metadata[:article_section] << {
+                      :url => a.attr('href'),
+                      :name => a.text
+                  }
+                  a.remove
                 end
+                li.children.each do |element|
+                  if element.text?
+                    parsed_metadata[:article_section] ||= []
+                    parsed_metadata[:article_section] << element.text
+                    element.remove
+                  end
+                end
+                li.remove if li.children.empty?
               end
-              li.remove if li.children.empty?
+              metadata.css('li.dateStamp').each do |li|
+                parsed_metadata[:date_stamp] = Time.parse(li.text()).strftime "%Y-%m-%d"
+                li.remove
+              end
+              article[:metadata] = parsed_metadata
+              metadata.remove if validate_all_processed metadata, '.cMetadata'
             end
-            metadata.css('li.dateStamp').each do |li|
-              parsed_metadata[:date_stamp] = Time.parse(li.text()).strftime "%Y-%m-%d"
-              li.remove
-            end
-            article[:metadata] = parsed_metadata
-            metadata.remove if validate_all_processed metadata, '.cMetadata'
+
             article_headline_box.children.each do |element|
               if element.comment?
                 r = process_head_comments element, parsed_metadata
@@ -419,7 +472,7 @@ module NewsTagger
                 article[:cites] << cite.text
                 cite.remove
               end
-              article_page.css('.insetContent', '.insetCol3wide', '.insetCol6wide', '.legacyInset').remove
+              article_page.css('.insetContent', '.insetCol3wide', '.insetCol6wide', '.legacyInset', '.embedType-interactive').remove
               article_page.children.each do |element|
                 if element.comment?
                   if element.content.strip == 'article end'
@@ -427,6 +480,11 @@ module NewsTagger
                     element.remove
                     next
                   end
+                end
+                if element.name == 'div'
+                  element.css('.offDutyMoreSection').remove
+                  element.remove if validate_all_processed element, '.articlePage div'
+                  next
                 end
               end
 
