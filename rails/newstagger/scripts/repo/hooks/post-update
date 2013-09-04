@@ -6,4 +6,15 @@
 # To enable this hook, rename this file to "post-update".
 
 
+echo 'HELLO WORLD'
+ORIGIN_GIT_DIR=`pwd`
+unset GIT_DIR
+
+DARIUS_RAILS_APP_HOME=/var/app/rails/newstagger
+cd ${DARIUS_RAILS_APP_HOME}
+exec git fetch --all
+exec git reset origin/master
+exec rake darius:deploy:post_git_update RAILS_ENV=production
+
+GIT_DIR=${ORIGIN_GIT_DIR}
 exec git update-server-info
