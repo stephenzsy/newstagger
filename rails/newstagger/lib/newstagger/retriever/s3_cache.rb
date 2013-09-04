@@ -40,8 +40,8 @@ module NewsTagger
         @s3_client = @s3.client
       end
 
-      def retrieve_from_cache(topic, url, cache_cutoff = nil, cache_cutoff_key = nil)
-        s3_key = "#{@prefix}#{topic}/#{Digest::SHA2.hexdigest(url)}"
+      def retrieve_from_cache(topic, key_part, url, cache_cutoff = nil, cache_cutoff_key = nil)
+        s3_key = "#{@prefix}#{topic}/#{key_part}#{Digest::SHA2.hexdigest(url)}"
         p s3_key
         begin
           response = @s3_client.get_object :bucket_name => @bucket, :key => s3_key
@@ -59,7 +59,7 @@ module NewsTagger
         true
       end
 
-      def send_to_cache(topic, url, content, document_type, metadata={}, reduced_redundancy = true)
+      def send_to_cache(topic, key_part, url, content, document_type, metadata={}, reduced_redundancy = true)
         content_type = nil
         case document_type
           when :html
@@ -67,7 +67,7 @@ module NewsTagger
           when :json
             content_type = 'application/json'
         end
-        s3_key = "#{@prefix}#{topic}/#{Digest::SHA2.hexdigest(url)}"
+        s3_key = "#{@prefix}#{topic}/#{key_part}#{Digest::SHA2.hexdigest(url)}"
         begin
           # @s3.buckets[@bucket].objects[s3_key].write(content, :storage_class => reduced_redundancy ? 'REDUCED_REDUNDANCY' : 'STANDARD',
           #                                           :content_type => content_type,

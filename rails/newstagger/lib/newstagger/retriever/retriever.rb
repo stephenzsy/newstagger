@@ -24,10 +24,15 @@ module NewsTagger
         nil
       end
 
+      def handle_set_cookie(set_cookie_line)
+        nil
+      end
+
       def filter_response(response)
         case response.code
           when '200'
           when '302'
+            handle_set_cookie response['set-cookie'] unless response['set-cookie'].nil?
             return {:new_url => response['location']}
           else
             p response
@@ -53,7 +58,7 @@ module NewsTagger
         end
       end
 
-      def retrieve_article(url)
+      def retrieve_article(url, datetime)
         while true
           p url
           uri = URI(url)
@@ -76,8 +81,8 @@ module NewsTagger
         true
       end
 
-      def retrieve_processed_article(url)
-        retrieve_article url do |content|
+      def retrieve_processed_article(url, datetime)
+        retrieve_article url, datetime do |content|
           yield process_article url, content
         end
       end
@@ -96,7 +101,7 @@ module NewsTagger
         cutoff_time = get_cache_cutoff_time date
         retrieve_processed_daily_index local_date, cutoff_time do |index|
           index[:articles].each do |article|
-            retrieve_processed_article article[:url] do |normalized_article|
+            retrieve_processed_article article[:url], local_date do |normalized_article|
               yield normalized_article
             end
           end
@@ -114,13 +119,13 @@ module NewsTagger
 
       def retrieve_daily_index(local_date, cutoff_time)
         url = get_daily_index_url local_date
-        result = @cache.retrieve_from_cache("#{@topic_vendor}:daily_index:raw", url, cutoff_time, :retrieval_time) do |content, metadata={}|
+        result = @cache.retrieve_from_cache("#{@topic_vendor}:daily_index:raw", local_date.strftime('%Y/%m/%d-'), url, cutoff_time, :retrieval_time) do |content, metadata={}|
           yield content
           return true
         end
         unless result
           super(local_date) do |content|
-            @cache.send_to_cache "#{@topic_vendor}:daily_index:raw", url, content, :html, {
+            @cache.send_to_cache "#{@topic_vendor}:daily_index:raw", local_date.strftime('%Y/%m/%d-'), url, content, :html, {
                 :url => url,
                 :local_date => local_date.iso8601,
                 :retrieval_time => Time.now.utc.iso8601(3),
@@ -134,12 +139,16 @@ module NewsTagger
 
       def retrieve_processed_daily_index(local_date, cache_cutoff_time)
         url = get_daily_index_url local_date
-        result = @cache.retrieve_from_cache("#{@topic_vendor}:daily_index:processed", url, cache_cutoff_time, :processed_time) do |content, metadata={}|
+        result = @cache.retrieve_from_cache("#{@topic_vendor}:daily_index:processed",
+                                            local_date.strftime('%Y/%m/%d-'),
+                                            url,
+                                            cache_cutoff_time,
+                                            :processed_time) do |content, metadata={}|
           yield JSON.parse content, :symbolize_names => true
         end
         unless result
           super local_date, cache_cutoff_time do |index|
-            @cache.send_to_cache "#{@topic_vendor}:daily_index:processed", url, JSON.generate(index), :json, {
+            @cache.send_to_cache "#{@topic_vendor}:daily_index:processed", local_date.strftime('%Y/%m/%d-'), url, JSON.generate(index), :json, {
                 :url => url,
                 :local_date => local_date.iso8601,
                 :processed_time => Time.now.utc.iso8601(3),
@@ -151,31 +160,35 @@ module NewsTagger
         result
       end
 
-      def retrieve_article(url)
-        result = @cache.retrieve_from_cache("#{@topic_vendor}:article:raw", url) do |content, metadata={}|
+      def retrieve_article(url, datetime)
+        result = @cache.retrieve_from_cache("#{@topic_vendor}:article:raw",
+                                            datetime.strftime('%Y/%m/%d/'),
+                                            url) do |content, metadata={}|
           yield content
           return true
         end
         unless result
-          result = super(url) do |content|
-            @cache.send_to_cache "#{@topic_vendor}:article:raw", url, content, :html, {
+          result = super(url, datetime) do |content|
+            @cache.send_to_cache("#{@topic_vendor}:article:raw", datetime.strftime('%Y/%m/%d/'), url, content, :html, {
                 :url => url,
                 :retrieval_time => Time.now.utc.iso8601(3),
                 :w_version => @website_version
-            }, false
+            }, false) do |hash|
+
+            end
             yield content
           end
         end
         result
       end
 
-      def retrieve_processed_article(url)
-        result = @cache.retrieve_from_cache("#{@topic_vendor}:article:processed", url) do |content, metadata={}|
+      def retrieve_processed_article(url, datetime)
+        result = @cache.retrieve_from_cache("#{@topic_vendor}:article:processed", datetime.strftime('%Y/%m/%d/'), url) do |content, metadata={}|
           yield JSON.parse content, :symbolize_names => true
         end
         unless result
-          result = super(url) do |normalized_article|
-            @cache.send_to_cache "#{@topic_vendor}:article:processed", url, JSON.generate(normalized_article), :json, {
+          result = super(url, datetime) do |normalized_article|
+            @cache.send_to_cache "#{@topic_vendor}:article:processed", datetime.strftime('%Y/%m/%d/'), url, JSON.generate(normalized_article), :json, {
                 :url => url,
                 :processed_time => Time.now.utc.iso8601(3),
                 :p_version => @processor_version

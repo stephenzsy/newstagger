@@ -16,7 +16,7 @@ module NewsTagger
 
           config = YAML.load_file(Rails.root.join 'config/aws-config.yml')[Rails.env]
           state_table_config = config[:state_table]
-          table_name = state_table_config[:table_name]
+          @dynamo_cookies_table_name = state_table_config[:table_name]
           region = state_table_config[:region]
           @dynamoDB = AWS::DynamoDB.new :access_key_id => config[:access_key_id],
                                         :secret_access_key => config[:secret_access_key],
@@ -24,7 +24,7 @@ module NewsTagger
                                         :logger => nil
 
           response = @dynamoDB.client.get_item(
-              :table_name => table_name,
+              :table_name => @dynamo_cookies_table_name,
               :key => {
                   :hash_key_element => {:s => "wsj_cookies"}
               })
@@ -67,6 +67,35 @@ module NewsTagger
         def get_additional_headers_for_retrieve
           cookies_header = {"Cookie" => @cookies.join("; ")}
           cookies_header
+        end
+
+        def handle_set_cookie(set_cookie_line)
+          cookies = {}
+          set_cookie_line.split(/,\s*/).each do |cookie_line|
+            if cookie_line.match /^(?<name>djcs_\w+)=(?<value>[^;]*)/
+              cookies[$~[:name]] = $~[:value]
+            elsif cookie_line.match /^user_type=subscribed/
+              cookies['user_type'] = 'subscribed'
+            end
+          end
+          if (cookies['djcs_auto'] and cookies['djcs_perm'] and cookies['djcs_session'] and cookies['user_type'])
+            @cookies = [
+                "djcs_auto=#{cookies['djcs_auto']}",
+                "djcs_perm=#{cookies['djcs_perm']}",
+                "djcs_session=#{cookies['djcs_session']}",
+                "user_type=#{cookies['user_type']}"
+            ]
+            @dynamoDB.client.put_item(
+                :table_name => @dynamo_cookies_table_name,
+                :item => {
+                    'key' => {:s => "wsj_cookies"},
+                    'value' => {
+                        :ss => @cookies
+                    }
+                },
+                :return_values => 'NONE'
+            )
+          end
         end
 
         def validate_all_processed(e, name)
@@ -273,15 +302,14 @@ module NewsTagger
           end
           social_by_line.children.each do |element|
             if element.text?
-              element.text.split("\n").each do |line|
-                t = line.strip.downcase
-                case t
-                  when '', 'by', 'and'
-                  when /by .*/
-                    result << line.strip.match(/by (.*)/i)[1].strip
-                  else
-                    raise "Unrecognized .socialByline element:\n#{element.inspect}\n#{t.inspect}"
-                end
+              line = element.text.gsub("\n", ' ').squeeze(' ').strip
+              t = line.downcase
+              case t
+                when '', 'by', 'and'
+                when /by .*/
+                  result << line.strip.match(/by (.*)/i)[1].strip
+                else
+                  raise "Unrecognized .socialByline element:\n#{element.inspect}\n#{t.inspect}"
               end
               element.remove
             end
