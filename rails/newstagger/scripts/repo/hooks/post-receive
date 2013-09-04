@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 GIT_WORK_TREE=/var/app/ git checkout -f
 
