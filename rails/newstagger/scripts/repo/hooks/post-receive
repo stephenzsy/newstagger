@@ -2,6 +2,7 @@
 
 GIT_WORK_TREE=/var/app/ git checkout -f
 
+source $HOME/.bash_profile
 DARIUS_RAILS_APP_HOME=/var/app/rails/newstagger
 cd ${DARIUS_RAILS_APP_HOME}
 bundle
