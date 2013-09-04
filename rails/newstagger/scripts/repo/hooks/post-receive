@@ -1,18 +1,8 @@
 #!/bin/sh
-#
-# An example hook script to prepare a packed repository for use over
-# dumb transports.
-#
-# To enable this hook, rename this file to "post-update".
 
-ORIGIN_GIT_DIR=`pwd`
-unset GIT_DIR
+GIT_WORK_TREE=/var/app/ git checkout -f
 
 DARIUS_RAILS_APP_HOME=/var/app/rails/newstagger
 cd ${DARIUS_RAILS_APP_HOME}
-exec git fetch --all
-exec git reset origin/master
+exec bundle
 exec rake darius:deploy:post_git_update RAILS_ENV=production
-
-GIT_DIR=${ORIGIN_GIT_DIR}
-exec git update-server-info
