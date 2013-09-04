@@ -5,8 +5,6 @@
 #
 # To enable this hook, rename this file to "post-update".
 
-
-echo 'HELLO WORLD'
 ORIGIN_GIT_DIR=`pwd`
 unset GIT_DIR
 
