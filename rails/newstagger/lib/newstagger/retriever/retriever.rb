@@ -28,12 +28,18 @@ module NewsTagger
         nil
       end
 
+      def filter_redirect_location(location)
+        nil
+      end
+
       def filter_response(response)
         case response.code
           when '200'
           when '302'
             handle_set_cookie response['set-cookie'] unless response['set-cookie'].nil?
-            return {:new_url => response['location']}
+            location = response['location']
+            filter_redirect_location location
+            return {:new_url => location}
           else
             p response
             raise "Fault Retrieve"
@@ -102,7 +108,7 @@ module NewsTagger
         retrieve_processed_daily_index local_date, cutoff_time do |index|
           index[:articles].each do |article|
             retrieve_processed_article article[:url], local_date do |normalized_article|
-              yield normalized_article
+              yield local_date, normalized_article
             end
           end
         end

@@ -27,20 +27,18 @@ namespace :newstagger do
       require 'newstagger/vendor/wsj'
 
       retriever = NewsTagger::Vendor::WSJ::Retriever.new
-      t = Time.new(2009, 4, 1).utc
-      #t = Time.new(2009, 4, 16).utc
-      #t = Time.new(2013, 9, 3).utc
-      until t >= Time.now do
-        puts "Day begin #{t.iso8601}"
+
+      start_time = Time.now
+      t = nil
+      until not t.nil? and t >= Time.now or Time.now > start_time + 10.minutes do
         count = 0
-        retriever.retrieve t do |document|
+        retriever.retrieve t do |local_date, document|
           count += 1
-          puts "#{t.strftime("%Y-%m-%d")}:#{count}P: #{document[:url]}"
+          Rails.logger.debug "#{local_date.strftime("%Y-%m-%d")}:#{count}P: #{document[:url]}"
+          t = date
         end
-        puts "Day done #{t.iso8601}"
         t += 1.day
       end
-
     end
   end
 end

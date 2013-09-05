@@ -30,13 +30,10 @@ module NewsTagger
         cache_config = config[:s3_cache]
         @bucket = cache_config[:bucket]
         @prefix = cache_config[:prefix]
-        @region = cache_config[:region]
         @s3 = AWS::S3.new :access_key_id => config[:access_key_id],
                           :secret_access_key => config[:secret_access_key],
-                          :region => cache_config[:region],
-                          #:logger => nil
-                          # :http_wire_trace => true,
-                          :http_open_timeout => 5
+                          :region => config[:region],
+                          :logger => nil
         @s3_client = @s3.client
       end
 

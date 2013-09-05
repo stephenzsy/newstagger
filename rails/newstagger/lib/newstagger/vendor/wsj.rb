@@ -15,16 +15,24 @@ module NewsTagger
           super 'wsj', WEBSITE_VERSION, PROCESSOR_VERSION
 
           config = YAML.load_file(Rails.root.join 'config/aws-config.yml')[Rails.env]
-          state_table_config = config[:state_table]
-          @dynamo_cookies_table_name = state_table_config[:table_name]
-          region = state_table_config[:region]
+          region = config[:region]
+
           @dynamoDB = AWS::DynamoDB.new :access_key_id => config[:access_key_id],
                                         :secret_access_key => config[:secret_access_key],
                                         :region => region,
                                         :logger => nil
 
+          state_table_config = config[:state_table]
+          @state_table_name = state_table_config[:table_name]
+
+          @state_table = @dynamoDB.tables[@state_table_name]
+          @state_table.load_schema
+
+          @error_table = @dynamoDB.tables[config[:error_table][:table_name]]
+          @error_table.load_schema
+
           response = @dynamoDB.client.get_item(
-              :table_name => @dynamo_cookies_table_name,
+              :table_name => @state_table_name,
               :key => {
                   :hash_key_element => {:s => "wsj_cookies"}
               })
@@ -69,6 +77,11 @@ module NewsTagger
           cookies_header
         end
 
+        def filter_redirect_location(location)
+          super(location)
+          raise 'Invalid location' unless URI.parse(location).host().end_with? 'wsj.com'
+        end
+
         def handle_set_cookie(set_cookie_line)
           cookies = {}
           set_cookie_line.split(/,\s*/).each do |cookie_line|
@@ -86,7 +99,7 @@ module NewsTagger
                 "user_type=#{cookies['user_type']}"
             ]
             @dynamoDB.client.put_item(
-                :table_name => @dynamo_cookies_table_name,
+                :table_name => @state_table_name,
                 :item => {
                     'key' => {:s => "wsj_cookies"},
                     'value' => {
@@ -524,6 +537,39 @@ module NewsTagger
               (article[:_no_head] and article[:_no_body])
 
           article
+        end
+
+        def retrieve(date = nil)
+          begin
+            if date.nil?
+              # auto determine the date to be retrieved from the database
+              last_processed_date_item = @state_table.items.at("wsj-last_processed_date-#{PROCESSOR_VERSION}")
+              if last_processed_date_item.exists?
+                p last_processed_date_item
+                date = Time.parse(last_processed_date_item.attributes['value']) + 1.day
+              else
+                date = ActiveSupport::TimeZone['America/New_York'].parse('2009-04-01')
+              end
+              if date > Time.now + 1.day
+                date = Time.now + 1.day
+              end
+              @state_table.items.create({'key' => "wsj-last_processed_date-#{PROCESSOR_VERSION}",
+                                         'value' => date.utc.iso8601})
+            end
+
+            logger = Rails.logger
+            logger.info "Begin process WSJ on date: #{date}"
+            super(date)
+            logger.info "Complete process WSJ on date: #{date}"
+          rescue Exception => e
+            logger.error "Failed to process wsj on date #{date}"
+            logger.error e.message
+            logger.error e.backtrace.join("\n")
+            @error_table.items.create('topic' => 'wsj-error',
+                                      'date' => date.utc.iso8601,
+                                      'processor_version' => PROCESSOR_VERSION,
+                                      'logged_at' => Time.now.utc.iso8601)
+          end
         end
       end
     end
