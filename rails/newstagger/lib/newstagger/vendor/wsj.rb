@@ -17,8 +17,7 @@ module NewsTagger
           config = YAML.load_file(Rails.root.join 'config/aws-config.yml')[Rails.env]
           region = config[:region]
 
-          @dynamoDB = AWS::DynamoDB.new :access_key_id => config[:access_key_id],
-                                        :secret_access_key => config[:secret_access_key],
+          @dynamoDB = AWS::DynamoDB.new :credential_provider => @credential_provider,
                                         :region => region,
                                         :logger => nil
 

@@ -1,4 +1,5 @@
 require 'newstagger/retriever/s3_cache'
+require 'newstagger/retriever/credential_provider'
 
 module NewsTagger
   module Retriever
@@ -6,6 +7,7 @@ module NewsTagger
 
       def initialize(topic_vendor)
         @topic_vendor = topic_vendor
+        @credential_provider = NewsTagger::AWSUtil::CredentialProvider.new
       end
 
       def get_daily_index_url(date)
@@ -118,7 +120,7 @@ module NewsTagger
     class S3CachedRetriever < Retriever
       def initialize(topic_vendor, website_version, processor_version)
         super(topic_vendor)
-        @cache = NewsTagger::Retriever::S3Cache.new
+        @cache = NewsTagger::Retriever::S3Cache.new @credential_provider
         @website_version = website_version
         @processor_version = processor_version
       end

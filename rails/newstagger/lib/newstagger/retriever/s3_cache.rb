@@ -25,13 +25,12 @@ end
 module NewsTagger
   module Retriever
     class S3Cache
-      def initialize
+      def initialize credential_provider
         config = YAML.load_file(Rails.root.join 'config/aws-config.yml')[Rails.env]
         cache_config = config[:s3_cache]
         @bucket = cache_config[:bucket]
         @prefix = cache_config[:prefix]
-        @s3 = AWS::S3.new :access_key_id => config[:access_key_id],
-                          :secret_access_key => config[:secret_access_key],
+        @s3 = AWS::S3.new :credential_provider => credential_provider,
                           :region => config[:region],
                           :logger => nil
         @s3_client = @s3.client
