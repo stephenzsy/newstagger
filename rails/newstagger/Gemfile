@@ -4,7 +4,8 @@ source 'https://rubygems.org'
 gem 'rails', '4.0.0'
 
 gem 'nokogiri'
-gem 'aws-sdk', '>= 1.15.0'
+gem 'aws-sdk', '>= 1.17.0'
+gem 'whenever'
 
 # Use sqlite3 as the database for Active Record
 gem 'sqlite3'

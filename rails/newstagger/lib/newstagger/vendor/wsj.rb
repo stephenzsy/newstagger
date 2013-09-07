@@ -20,6 +20,9 @@ module NewsTagger
           @dynamoDB = AWS::DynamoDB.new :credential_provider => @credential_provider,
                                         :region => region,
                                         :logger => nil
+          @sns = AWS::SNS.new :credential_provider => @credential_provider,
+                              :region => region
+          @sns_notification_topic = config[:sns_notification_topic]
 
           state_table_config = config[:state_table]
           @state_table_name = state_table_config[:table_name]
@@ -539,12 +542,12 @@ module NewsTagger
         end
 
         def retrieve(date = nil)
+          logger = Rails.logger
           begin
             if date.nil?
               # auto determine the date to be retrieved from the database
               last_processed_date_item = @state_table.items.at("wsj-last_processed_date-#{PROCESSOR_VERSION}")
               if last_processed_date_item.exists?
-                p last_processed_date_item
                 date = Time.parse(last_processed_date_item.attributes['value']) + 1.day
               else
                 date = ActiveSupport::TimeZone['America/New_York'].parse('2009-04-01')
@@ -556,8 +559,8 @@ module NewsTagger
                                          'value' => date.utc.iso8601})
             end
 
-            logger = Rails.logger
             logger.info "Begin process WSJ on date: #{date}"
+            yield :date, date
             super(date)
             logger.info "Complete process WSJ on date: #{date}"
           rescue Exception => e
@@ -568,6 +571,14 @@ module NewsTagger
                                       'date' => date.utc.iso8601,
                                       'processor_version' => PROCESSOR_VERSION,
                                       'logged_at' => Time.now.utc.iso8601)
+            @sns.topics[@sns_notification_topic].publish(([
+                'Error in Execution',
+                'Topic: wsj-error',
+                "Date of Error: #{date.iso8601}",
+                "Processor Version: #{PROCESSOR_VERSION}",
+                "Time of Execution: #{Time.now.utc.iso8601}",
+                "Stack Trace:",
+            ] + e.backtrace).join("\n"))
           end
         end
       end

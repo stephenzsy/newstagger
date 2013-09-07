@@ -30,12 +30,16 @@ namespace :newstagger do
 
       start_time = Time.now
       t = nil
-      until (not t.nil? and t >= Time.now) or Time.now > start_time + 10.minutes do
+      until (not t.nil? and t >= Time.now) or Time.now > start_time + 15.minutes do
         count = 0
-        retriever.retrieve t do |local_date, document|
-          count += 1
-          Rails.logger.debug "#{local_date.strftime("%Y-%m-%d")}:#{count}P: #{document[:url]}"
-          t = local_date
+        retriever.retrieve t do |type, value|
+          case type
+            when :date
+              t = value
+            when :normalized_article
+              count += 1
+              Rails.logger.debug "#{t.strftime("%Y-%m-%d")}:#{count}P: #{document[:url]}"
+          end
         end
         t += 1.day
       end

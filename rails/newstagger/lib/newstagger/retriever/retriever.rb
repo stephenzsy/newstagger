@@ -110,7 +110,7 @@ module NewsTagger
         retrieve_processed_daily_index local_date, cutoff_time do |index|
           index[:articles].each do |article|
             retrieve_processed_article article[:url], local_date do |normalized_article|
-              yield local_date, normalized_article
+              yield :normalized_article, normalized_article
             end
           end
         end
