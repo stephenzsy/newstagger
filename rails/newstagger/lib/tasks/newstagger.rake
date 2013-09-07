@@ -38,6 +38,7 @@ namespace :newstagger do
               t = value
             when :normalized_article
               count += 1
+              document = value
               Rails.logger.debug "#{t.strftime("%Y-%m-%d")}:#{count}P: #{document[:url]}"
           end
         end
