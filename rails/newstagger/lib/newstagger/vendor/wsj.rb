@@ -10,7 +10,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '20130825'
-        PROCESSOR_PATCH = 5
+        PROCESSOR_PATCH = 6
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -334,7 +334,13 @@ module NewsTagger
           end
 
           result = []
+
+          # clean up
           social_by_line.css('li.connect').remove
+          social_by_line.css('strong').each do |node|
+            node.before(node.children)
+            node.remove
+          end
           social_by_line.css('cite').each do |cite|
             cite.children.each do |element|
               r = process_social_by_line_element element
