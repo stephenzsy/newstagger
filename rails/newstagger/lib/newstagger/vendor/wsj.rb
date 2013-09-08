@@ -10,7 +10,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '20130825'
-        PROCESSOR_PATCH = 3
+        PROCESSOR_PATCH = 4
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -115,6 +115,17 @@ module NewsTagger
                 :return_values => 'NONE'
             )
           end
+        end
+
+        def recursive_remove_if_empty!(node)
+          if node.text?
+            node.remove if node.text.strip.empty?
+            return
+          end
+          node.children.each do |child|
+            recursive_remove_if_empty! child
+          end
+          node.remove if node.children.empty?
         end
 
         def validate_all_processed(e, name)
@@ -537,10 +548,16 @@ module NewsTagger
                     next
                   end
                 end
-                if element.name == 'div'
-                  element.css('.offDutyMoreSection').remove
-                  element.remove if validate_all_processed element, '.articlePage div'
-                  next
+                case element.name
+                  when 'div'
+                    element.css('.offDutyMoreSection').remove
+                    element.remove if validate_all_processed element, '.articlePage div'
+                    next
+                  when 'table'
+                    recursive_remove_if_empty! element
+                    # TODO parse table
+                    element.remove
+                    next
                 end
               end
 
@@ -616,7 +633,7 @@ module NewsTagger
           @error_table.items.each do |item|
             next unless item.hash_value == 'wsj-error'
             next unless item.attributes['processor_version'] == PROCESSOR_VERSION
-            unless item.attributes['fix_patch'].nil? or item.attributes['fix_patch'] < item.attributes['processor_patch']
+            unless item.attributes['fix_patch'].nil? or item.attributes['processor_patch'] >= item.attributes['fix_patch']
               item.delete
               next
             end
