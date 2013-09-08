@@ -568,7 +568,7 @@ module NewsTagger
             # auto determine the date to be retrieved from the database
             last_processed_date_item = @state_table.items.at("wsj-last_processed_date-#{PROCESSOR_VERSION}")
             if last_processed_date_item.exists?
-              date = TIME_ZONE.utc_to_local(Time.parse(last_processed_date_item.attributes['value'])) + 1.day
+              date = Time.parse(last_processed_date_item.attributes['value']).in_time_zone(TIME_ZONE) + 1.day
             else
               date = TIME_ZONE.parse('2009-04-01')
             end
