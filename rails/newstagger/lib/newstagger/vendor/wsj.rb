@@ -331,6 +331,8 @@ module NewsTagger
               t = line.downcase
               case t
                 when '', 'by', 'and', ','
+                when 'de'
+                  # foreign language TODO handle
                 when /by .*/
                   result << line.strip.match(/by (.*)/i)[1].strip
                 else
