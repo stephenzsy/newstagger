@@ -330,7 +330,7 @@ module NewsTagger
               line = element.text.gsub("\n", ' ').squeeze(' ').strip
               t = line.downcase
               case t
-                when '', 'by', 'and', ','
+                when '', /by\s*/, /and\s*/, ','
                 when 'de'
                   # foreign language TODO handle
                 when /by .*/

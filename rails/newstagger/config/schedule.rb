@@ -22,3 +22,7 @@
 every '*/15 * * * *' do
   rake 'newstagger:tag:wsj', :output => {:error => '/dev/null', :standard => '/dev/null'}
 end
+
+every '0 * * * *' do
+  rake 'newstagger:tag:wsj_cleanup', :output => {:error => '/dev/null', :standard => '/dev/null'}
+end
