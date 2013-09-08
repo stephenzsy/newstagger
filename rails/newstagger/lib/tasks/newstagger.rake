@@ -51,7 +51,7 @@ namespace :newstagger do
 
       retriever = NewsTagger::Vendor::WSJ::Retriever.new :test_mode => true
 
-      t = ActiveSupport::TimeZone['America/New_York'].parse('2009-05-23')
+      t = ActiveSupport::TimeZone['America/New_York'].parse('2009-06-20')
       count = 0
       retriever.retrieve t do |type, value|
         case type

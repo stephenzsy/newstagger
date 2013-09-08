@@ -10,7 +10,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '20130825'
-        PROCESSOR_PATCH = 4
+        PROCESSOR_PATCH = 5
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -183,6 +183,15 @@ module NewsTagger
                 result[:sub_paragraphs] ||= []
                 result[:sub_paragraphs] << process_paragraph(element)
                 element.remove if validate_all_processed element, 'p > p'
+              when 'phrase'
+                texts << element.text.strip
+                result[:entities] ||= []
+                entity = {}
+                element.attributes.each do |name, value|
+                  entity[name.to_sym] = value
+                end
+                result[:entities] << entity
+                element.remove
               when 'strong', 'em'
                 texts << element.text.strip
                 element.remove
@@ -264,18 +273,19 @@ module NewsTagger
             while true
               fw_sibling = li.next_sibling
               if fw_sibling and fw_sibling.text? or
-                  (not fw_sibling.nil? and fw_sibling.name == 'strong')
+                  (not fw_sibling.nil? and (fw_sibling.name == 'strong' or fw_sibling.name == 'em'))
                 case fw_sibling.text.strip
                   when '', '|'
                     fw_sibling.remove
                     next
                   when /in (.*) and/, /in (.*),?/, /at (.*),?/
                     result[:location] = $~[1].strip
-                    fw_sibling.remove
                   when /from (.*)/i
                     result[:organization] = $~[1].strip
-                    fw_sibling.remove
+                  else
+                    result[:entity] = fw_sibling.text.strip
                 end
+                fw_sibling.remove
               end
               break
             end
@@ -347,7 +357,7 @@ module NewsTagger
                 when /by .*/
                   result << line.strip.match(/by (.*)/i)[1].strip
                 else
-                  raise "Unrecognized .socialByline element:\n#{element.inspect}\n#{t.inspect}"
+                  result<< {:entity => line}
               end
               element.remove
             end
