@@ -616,6 +616,11 @@ module NewsTagger
           @error_table.items.each do |item|
             next unless item.hash_value == 'wsj-error'
             next unless item.attributes['processor_version'] == PROCESSOR_VERSION
+            unless item.attributes['fix_patch'].nil?
+              item.delete
+              next
+            end
+
             if item.attributes['processor_patch'].nil? or item.attributes['processor_patch'] < PROCESSOR_PATCH
               count = 0
               date = Time.parse(item.attributes['date'])
@@ -625,7 +630,10 @@ module NewsTagger
                   puts "R #{date}|#{count}: #{document[:url]}"
                 end
               end
-              item.attributes.add({'fix_patch' => PROCESSOR_PATCH}, {:if => {'processor_patch' => PROCESSOR_PATCH}})
+              begin
+                item.attributes.add({'fix_patch' => PROCESSOR_PATCH}, {:if => {'processor_patch' => PROCESSOR_PATCH}})
+              rescue AWS::DynamoDB::Errors::ConditionalCheckFailedException => e
+              end
             end
           end
         end
