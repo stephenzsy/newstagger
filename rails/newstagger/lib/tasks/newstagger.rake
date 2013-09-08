@@ -45,5 +45,33 @@ namespace :newstagger do
         t += 1.day
       end
     end
+
+    task :test_wsj => :environment do
+      require 'newstagger/vendor/wsj'
+
+      retriever = NewsTagger::Vendor::WSJ::Retriever.new :test_mode => true
+
+      t = ActiveSupport::TimeZone['America/New_York'].parse('2009-04-28')
+      count = 0
+      retriever.retrieve t do |type, value|
+        case type
+          when :date
+            t = value
+          when :normalized_article
+            count += 1
+            document = value
+            puts "#{t.strftime("%Y-%m-%d")}:#{count}P: #{document[:url]}"
+        end
+      end
+    end
+
+    task :wsj_cleanup => :environment do
+
+      require 'newstagger/vendor/wsj'
+
+      retriever = NewsTagger::Vendor::WSJ::Retriever.new :test_mode => true
+      retriever.cleanup_status
+
+    end
   end
 end

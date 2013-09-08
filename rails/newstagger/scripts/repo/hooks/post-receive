@@ -6,4 +6,6 @@ source $HOME/.bash_profile
 DARIUS_RAILS_APP_HOME=/var/app/rails/newstagger
 cd ${DARIUS_RAILS_APP_HOME}
 bundle
-rake darius:deploy:post_git_update RAILS_ENV=production
+export RAILS_ENV=production
+whenever
+

@@ -64,32 +64,22 @@ module NewsTagger
             content_type = 'application/json'
         end
         s3_key = "#{@prefix}#{topic}/#{key_part}#{Digest::SHA2.hexdigest(url)}"
+        retry_count = 0
         begin
-          # @s3.buckets[@bucket].objects[s3_key].write(content, :storage_class => reduced_redundancy ? 'REDUCED_REDUNDANCY' : 'STANDARD',
-          #                                           :content_type => content_type,
-          #                                          :metadata => metadata)
-          1.upto(5) do |i|
-            begin
-              puts "send: #{s3_key}"
-              timeout(5) do
-                @s3.client.put_object :bucket_name => @bucket,
-                                      :key => s3_key,
-                                      :data => content,
-                                      :storage_class => reduced_redundancy ? 'REDUCED_REDUNDANCY' : 'STANDARD',
-                                      :content_type => content_type,
-                                      :metadata => metadata
-              end
-              puts "sent: #{s3_key}"
-
-            rescue TimeoutError => te
-              raise te if i > 3
-              next
-            end
-            break
+          puts "send: #{s3_key}"
+          timeout(5) do
+            @s3.client.put_object :bucket_name => @bucket,
+                                  :key => s3_key,
+                                  :data => content,
+                                  :storage_class => reduced_redundancy ? 'REDUCED_REDUNDANCY' : 'STANDARD',
+                                  :content_type => content_type,
+                                  :metadata => metadata
           end
-
-        rescue Exception => e
-          raise e
+          puts "sent: #{s3_key}"
+        rescue Exception => te
+          retry_count += 1
+          retry unless retry_count > 3
+          raise te
         end
       end
     end

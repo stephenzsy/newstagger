@@ -10,8 +10,12 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '20130825'
+        PROCESSOR_PATCH = 1
+        TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
-        def initialize
+        def initialize(opt={})
+          @test_mode = opt[:test_mode]
+          @test_mode = false if @test_mode.nil?
           super 'wsj', WEBSITE_VERSION, PROCESSOR_VERSION
 
           config = YAML.load_file(Rails.root.join 'config/aws-config.yml')[Rails.env]
@@ -242,66 +246,72 @@ module NewsTagger
           return result
         end
 
-        def handle_by_li(li)
-          fw_sibling = li.next_sibling
-          location = nil
-          if fw_sibling and fw_sibling.text?
-            case fw_sibling.text.strip
-              when /in (.*) and/, /in (.*),?/
-                location = $~[1]
-            end
-            fw_sibling.remove
-          end
-
-          author = nil
-
-          if li.has_attribute? 'class' and li.attr("class").split(" ").include? 'byName'
-            columnist = {}
-            li.attributes.each do |name, value|
-              case name
-                when 'class'
-                  next
-                when 'data-dj-author-topicserviceid'
-                  columnist[:author_topicserviceid] = li.attr(name) unless li.attr(name).nil? or li.attr(name).empty?
-                else
-                  raise "Unrecongized Attribute in li:\n#{li.inspect}"
-              end
-            end
-            li.css('a').each do |a|
-              url = a.attr('href')
-              if url.start_with? 'http://topics.wsj.com/person'
-                columnist[:url] = url
-                columnist[:name] = a.text.strip
-                a.remove
-              end
-            end
-            li.children.each do |element|
-              if element.text?
-                columnist[:name] = element.text.strip
-                element.remove
-              end
-            end
-            author = columnist
-          else
-            li.children.each do |element|
-              if element.text?
-                author = element.text.strip
-                element.remove
-              end
-            end
-          end
-
-          unless location.nil?
-            return {
-                :name => author,
-                :location => location
-            }
-          end
-
-          author
-        end
-
         def process_social_by_line (social_by_line)
+
+          def handle_by_li(li)
+            result = {}
+            while true
+              fw_sibling = li.next_sibling
+              if fw_sibling and fw_sibling.text? or
+                  (not fw_sibling.nil? and fw_sibling.name == 'strong')
+                case fw_sibling.text.strip
+                  when ''
+                    fw_sibling.remove
+                    next
+                  when /in (.*) and/, /in (.*),?/
+                    result[:location] = $~[1].strip
+                    fw_sibling.remove
+                  when /from (.*)/i
+                    result[:organization] = $~[1].strip
+                    fw_sibling.remove
+                end
+              end
+              break
+            end
+
+            author = nil
+
+            if li.has_attribute? 'class' and li.attr("class").split(" ").include? 'byName'
+              columnist = {}
+              li.attributes.each do |name, value|
+                case name
+                  when 'class'
+                    next
+                  when 'data-dj-author-topicserviceid'
+                    columnist[:author_topicserviceid] = li.attr(name) unless li.attr(name).nil? or li.attr(name).empty?
+                  else
+                    raise "Unrecongized Attribute in li:\n#{li.inspect}"
+                end
+              end
+              li.css('a').each do |a|
+                url = a.attr('href')
+                if url.start_with? 'http://topics.wsj.com/person'
+                  columnist[:url] = url
+                  columnist[:name] = a.text.strip
+                  a.remove
+                end
+              end
+              li.children.each do |element|
+                if element.text?
+                  columnist[:name] = element.text.strip
+                  element.remove
+                end
+              end
+              author = columnist
+            else
+              li.children.each do |element|
+                if element.text?
+                  author = element.text.strip
+                  element.remove
+                end
+              end
+            end
+
+            return author if result.empty?
+            result[:name] = author
+            result
+          end
+
           result = []
           social_by_line.css('li.connect').remove
           social_by_line.css('cite').each do |cite|
@@ -320,7 +330,7 @@ module NewsTagger
               line = element.text.gsub("\n", ' ').squeeze(' ').strip
               t = line.downcase
               case t
-                when '', 'by', 'and'
+                when '', 'by', 'and', ','
                 when /by .*/
                   result << line.strip.match(/by (.*)/i)[1].strip
                 else
@@ -504,6 +514,7 @@ module NewsTagger
                 article[:by] = by unless by.nil?
                 social_by_line.remove if validate_all_processed social_by_line, '.socialByline'
               end
+              fix_article_page! article_page
               article_page.children.filter('p, h4, h5, h6, ul, a, blockquote').each do |node|
                 paragraph = process_paragraph node
                 article[:paragraphs] ||= []
@@ -515,7 +526,7 @@ module NewsTagger
                 article[:cites] << cite.text
                 cite.remove
               end
-              article_page.css('.insetContent', '.insetCol3wide', '.insetCol6wide', '.legacyInset', '.embedType-interactive').remove
+              article_page.css('.insetContent', '.insetCol3wide', '.insetCol6wide', '.embedType-interactive').remove
               article_page.children.each do |element|
                 if element.comment?
                   if element.content.strip == 'article end'
@@ -541,44 +552,69 @@ module NewsTagger
           article
         end
 
+        def fix_article_page!(article_page)
+          article_page.css('.legacyInset').each do |legacy_insert|
+            legacy_insert.css('.insetContent').remove
+            legacy_insert.before(legacy_insert.children)
+            legacy_insert.remove if validate_all_processed legacy_insert, '.legacyInset'
+          end
+        end
+
         def retrieve(date = nil)
           logger = Rails.logger
-          begin
-            if date.nil?
-              # auto determine the date to be retrieved from the database
-              last_processed_date_item = @state_table.items.at("wsj-last_processed_date-#{PROCESSOR_VERSION}")
-              if last_processed_date_item.exists?
-                date = Time.parse(last_processed_date_item.attributes['value']) + 1.day
-              else
-                date = ActiveSupport::TimeZone['America/New_York'].parse('2009-04-01')
-              end
-              if date > Time.now + 1.day
-                date = Time.now + 1.day
-              end
-              @state_table.items.create({'key' => "wsj-last_processed_date-#{PROCESSOR_VERSION}",
-                                         'value' => date.utc.iso8601})
+          if date.nil?
+            # auto determine the date to be retrieved from the database
+            last_processed_date_item = @state_table.items.at("wsj-last_processed_date-#{PROCESSOR_VERSION}")
+            if last_processed_date_item.exists?
+              date = TimeZone.utc_to_local(Time.parse(last_processed_date_item.attributes['value'])) + 1.day
+            else
+              date = ActiveSupport::TimeZone['America/New_York'].parse('2009-04-01')
+            end
+            if date > Time.now
+              date = Time.now
             end
 
-            logger.info "Begin process WSJ on date: #{date}"
-            yield :date, date
-            super(date)
-            logger.info "Complete process WSJ on date: #{date}"
+          end
+          @state_table.items.create({'key' => "wsj-last_processed_date-#{PROCESSOR_VERSION}",
+                                     'value' => date.utc.iso8601}) unless @test_mode
+          local_date = get_local_date date
+          begin
+
+
+            logger.info "Begin process WSJ on date: #{local_date}"
+            yield :date, local_date
+            super(local_date)
+            logger.info "Complete process WSJ on date: #{local_date}"
           rescue Exception => e
-            logger.error "Failed to process wsj on date #{date}"
+            if (@test_mode)
+              raise e
+            end
+            logger.error "Failed to process wsj on date #{local_date}"
             logger.error e.message
             logger.error e.backtrace.join("\n")
             @error_table.items.create('topic' => 'wsj-error',
-                                      'date' => date.utc.iso8601,
+                                      'date' => local_date.utc.iso8601,
                                       'processor_version' => PROCESSOR_VERSION,
+                                      'processor_patch' => PROCESSOR_PATCH,
                                       'logged_at' => Time.now.utc.iso8601)
             @sns.topics[@sns_notification_topic].publish(([
                 'Error in Execution',
                 'Topic: wsj-error',
-                "Date of Error: #{date.iso8601}",
+                "Date of Error: #{local_date.iso8601}",
                 "Processor Version: #{PROCESSOR_VERSION}",
+                "Processor Patch: #{PROCESSOR_PATCH}",
                 "Time of Execution: #{Time.now.utc.iso8601}",
-                "Stack Trace:",
+                "Error Message: #{e.message}",
+                'Stack Trace:',
             ] + e.backtrace).join("\n"))
+          end
+        end
+
+        def cleanup_status
+          @error_table.items.each do |item|
+            next unless item.hash_value == 'wsj-error'
+            next unless item.attributes['processor_version'] == PROCESSOR_VERSION
+            item.delete if item.attributes['processor_patch'].nil? or item.attributes['processor_patch'] < PROCESSOR_PATCH
           end
         end
       end

@@ -91,7 +91,12 @@ module NewsTagger
 
       def retrieve_processed_article(url, datetime)
         retrieve_article url, datetime do |content|
-          yield process_article url, content
+          begin
+            yield process_article url, content
+          rescue
+            puts "Error processing article URL: #{url}"
+            raise
+          end
         end
       end
 
