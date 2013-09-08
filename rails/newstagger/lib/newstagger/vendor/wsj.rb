@@ -647,7 +647,7 @@ module NewsTagger
                   puts "R #{date}|#{count}: #{document[:url]}"
                 end
               end
-              item.attributes.add({'fix_patch' => PROCESSOR_PATCH})
+              item.attributes.set({'fix_patch' => PROCESSOR_PATCH})
             end
           end
         end
