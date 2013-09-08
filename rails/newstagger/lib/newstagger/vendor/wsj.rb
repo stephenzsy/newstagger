@@ -589,7 +589,7 @@ module NewsTagger
           end
         end
 
-        def retrieve(date = nil)
+        def retrieve(date = nil, record_date = true)
           logger = Rails.logger
           if date.nil?
             # auto determine the date to be retrieved from the database
@@ -599,17 +599,16 @@ module NewsTagger
             else
               date = TIME_ZONE.parse('2009-04-01')
             end
-            if date > Time.now
-              date = Time.now
-            end
-
+          end
+          if date > Time.now
+            date = Time.now
           end
           local_date = get_local_date date
-          @state_table.items.create({'key' => "wsj-last_processed_date-#{PROCESSOR_VERSION}",
-                                     'value' => local_date.utc.iso8601}) unless @test_mode
+          if (record_date)
+            @state_table.items.create({'key' => "wsj-last_processed_date-#{PROCESSOR_VERSION}",
+                                       'value' => local_date.utc.iso8601}) unless @test_mode
+          end
           begin
-
-
             logger.info "Begin process WSJ on date: #{local_date}"
             yield :date, local_date
             super(local_date)
@@ -651,7 +650,7 @@ module NewsTagger
             if item.attributes['processor_patch'].nil? or item.attributes['processor_patch'] < PROCESSOR_PATCH
               count = 0
               date = Time.parse(item.attributes['date'])
-              retrieve date do |type, document|
+              retrieve date, false do |type, document|
                 count += 1
                 if type == :normalized_article
                   puts "R #{date}|#{count}: #{document[:url]}"
