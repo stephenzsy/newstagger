@@ -577,9 +577,9 @@ module NewsTagger
             end
 
           end
-          @state_table.items.create({'key' => "wsj-last_processed_date-#{PROCESSOR_VERSION}",
-                                     'value' => date.utc.iso8601}) unless @test_mode
           local_date = get_local_date date
+          @state_table.items.create({'key' => "wsj-last_processed_date-#{PROCESSOR_VERSION}",
+                                     'value' => local_date.utc.iso8601}) unless @test_mode
           begin
 
 
