@@ -69,7 +69,7 @@ namespace :newstagger do
 
       require 'newstagger/vendor/wsj'
 
-      retriever = NewsTagger::Vendor::WSJ::Retriever.new :test_mode => true
+      retriever = NewsTagger::Vendor::WSJ::Retriever.new
       retriever.cleanup_status
 
     end
