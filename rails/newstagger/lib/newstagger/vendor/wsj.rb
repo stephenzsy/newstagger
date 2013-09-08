@@ -10,7 +10,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '20130825'
-        PROCESSOR_PATCH = 1
+        PROCESSOR_PATCH = 2
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -255,7 +255,7 @@ module NewsTagger
               if fw_sibling and fw_sibling.text? or
                   (not fw_sibling.nil? and fw_sibling.name == 'strong')
                 case fw_sibling.text.strip
-                  when ''
+                  when '', '|'
                     fw_sibling.remove
                     next
                   when /in (.*) and/, /in (.*),?/
@@ -616,7 +616,17 @@ module NewsTagger
           @error_table.items.each do |item|
             next unless item.hash_value == 'wsj-error'
             next unless item.attributes['processor_version'] == PROCESSOR_VERSION
-            item.delete if item.attributes['processor_patch'].nil? or item.attributes['processor_patch'] < PROCESSOR_PATCH
+            if item.attributes['processor_patch'].nil? or item.attributes['processor_patch'] < PROCESSOR_PATCH
+              count = 0
+              date = Time.parse(item.attributes['date'])
+              retrieve date do |type, document|
+                count += 1
+                if type == :normalized_article
+                  puts "R #{date}|#{count}: #{document[:url]}"
+                end
+              end
+              item.delete
+            end
           end
         end
       end
