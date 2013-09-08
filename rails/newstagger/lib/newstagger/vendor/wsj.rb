@@ -10,7 +10,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '20130825'
-        PROCESSOR_PATCH = 2
+        PROCESSOR_PATCH = 3
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -258,7 +258,7 @@ module NewsTagger
                   when '', '|'
                     fw_sibling.remove
                     next
-                  when /in (.*) and/, /in (.*),?/
+                  when /in (.*) and/, /in (.*),?/, /at (.*),?/
                     result[:location] = $~[1].strip
                     fw_sibling.remove
                   when /from (.*)/i
