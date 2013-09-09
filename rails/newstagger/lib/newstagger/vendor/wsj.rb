@@ -10,7 +10,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '20130825'
-        PROCESSOR_PATCH = 6
+        PROCESSOR_PATCH = 7
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -134,7 +134,7 @@ module NewsTagger
               when Nokogiri::XML::Node::TEXT_NODE
                 next if element.text.strip.empty?
             end
-            raise "Unrecognized #{name} element:\n#{element.inspect()}"
+            raise "Unrecognized #{name} element:\n#{element.inspect()[0..1024]}"
           end
           true
         end
@@ -254,7 +254,7 @@ module NewsTagger
           if element.text?
             result = element.text.strip
             element.remove
-          elsif element.name == 'li'
+          elsif element.name == 'li' or element.name == 'em'
             element.children.each do |li|
               unless result.nil?
                 raise "Unsupported .socialByline Element:\n#{element.inspect}"
@@ -445,6 +445,7 @@ module NewsTagger
 
 
         def process_article(url, content)
+          fix_article_html! content
           doc = Nokogiri::HTML(content)
 
           article = {
@@ -453,6 +454,18 @@ module NewsTagger
           article_start_flag = false
           article_end_flag = false
 
+
+          doc.css('head meta').each do |meta|
+            if meta.has_attribute? 'name' and meta.has_attribute? 'content'
+              case meta.attr('name')
+                when /^twitter:.*/, /^fb:.*/
+                  next
+                else
+                  article[:head_meta] ||= []
+                  article[:head_meta] << {:name => meta.attr('name'), :content => meta.attr('content')}
+              end
+            end
+          end
 
           parsed_metadata = {}
           article_headline_box = doc.css('.articleHeadlineBox').first
@@ -516,9 +529,15 @@ module NewsTagger
             article_headline_box.css('.columnist').each do |columnist|
               columnist.css('.columnistByline').each do |columnist_by_line|
                 columnist_by_line.css('.socialByline').each do |social_by_line|
-                  by = process_social_by_line social_by_line
+                  by = nil
+                  begin
+                    by = process_social_by_line social_by_line
+                    social_by_line.remove if validate_all_processed social_by_line, '.columnist .social_by_line'
+                  rescue
+                    by = social_by_line.text.gsub("\n", ' ').squeeze(' ').strip
+                    social_by_line.remove
+                  end
                   article[:by] = by unless by.nil?
-                  social_by_line.remove if validate_all_processed social_by_line, '.columnist .social_by_line'
                 end
                 columnist_by_line.remove if validate_all_processed columnist_by_line, '.columnist_by_line'
               end
@@ -539,9 +558,15 @@ module NewsTagger
           else
             article_story_body.css(".articlePage").each do |article_page|
               article_page.css('ul.socialByline').each do |social_by_line|
-                by = process_social_by_line social_by_line
+                by = nil
+                begin
+                  by = process_social_by_line social_by_line
+                  social_by_line.remove if validate_all_processed social_by_line, '.columnist .social_by_line'
+                rescue
+                  by = social_by_line.text.gsub("\n", ' ').squeeze(' ').strip
+                  social_by_line.remove
+                end
                 article[:by] = by unless by.nil?
-                social_by_line.remove if validate_all_processed social_by_line, '.socialByline'
               end
               fix_article_page! article_page
               article_page.children.filter('p, h4, h5, h6, ul, a, blockquote').each do |node|
@@ -585,6 +610,10 @@ module NewsTagger
               (article[:_no_head] and article[:_no_body])
 
           article
+        end
+
+        def fix_article_html!(text)
+          text.gsub!('<TH>', ' ')
         end
 
         def fix_article_page!(article_page)
