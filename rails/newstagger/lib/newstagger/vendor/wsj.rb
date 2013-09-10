@@ -1,5 +1,6 @@
 require 'newstagger/retriever/retriever'
 require 'cgi'
+require 'newstagger/retriever/parser'
 
 require 'aws-sdk'
 
@@ -9,8 +10,8 @@ module NewsTagger
       class Retriever < NewsTagger::Retriever::S3CachedRetriever
 
         WEBSITE_VERSION = '20130825'
-        PROCESSOR_VERSION = '20130825'
-        PROCESSOR_PATCH = 7
+        PROCESSOR_VERSION = '20130909'
+        PROCESSOR_PATCH = 1
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -447,6 +448,11 @@ module NewsTagger
         def process_article(url, content)
           fix_article_html! content
           doc = Nokogiri::HTML(content)
+          parser = NewsTagger::Parsers::HTMLParser.new
+          results = parser.parse(doc)
+
+          puts JSON.pretty_generate(results)
+          raise 'Need Developer'
 
           article = {
               :url => url,
