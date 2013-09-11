@@ -444,12 +444,36 @@ module NewsTagger
           }
         end
 
+        module Parsers
+          include NewsTagger::Parsers
+
+          class HeadMetaParser < HTMLParser
+            def parse(node)
+
+            end
+          end
+
+          class ArticleParser < HTMLParser
+            def parse(node)
+              select_set_to_parse(node, ['head meta']) do |node_set|
+                r = []
+                node_set.each do |n|
+                  nr = super(n)
+                  r << nr unless nr.nil?
+                end
+                {:article => [:head_meta => r]}
+              end
+            end
+
+          end
+
+
+        end
 
         def process_article(url, content)
           fix_article_html! content
           doc = Nokogiri::HTML(content)
-          parser = NewsTagger::Parsers::HTMLParser.new
-          results = parser.parse(doc)
+          results = Parsers::ArticleParser.new.parse(doc)
 
           puts JSON.pretty_generate(results)
           raise 'Need Developer'

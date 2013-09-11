@@ -5,6 +5,20 @@ module NewsTagger
 
     class HTMLParser
 
+      def parse(node)
+        parse_node(node)
+      end
+
+      def select_set_to_parse(node, selectors)
+        node_set = node.css(*selectors)
+        begin
+          yield node_set
+        ensure
+          node_set.unlink
+        end
+      end
+
+      private
       def parse_attributes(node)
         r = []
         node.attributes.each do |name, attr|
@@ -13,18 +27,19 @@ module NewsTagger
         r
       end
 
-      def parse_node_set(node_set, selector_parser = :all, parse_remainder = :default, fail_over = false)
+      def parse_node_set(node_set)
         r = []
         node_set.each do |node|
-          parsed_node = parse(node, selector_parser, parse_remainder, fail_over)
+          parsed_node = parse_node(node)
           r << parsed_node unless parsed_node.nil?
         end
         return nil if r.empty?
         r
       end
 
-      def parse(node, selector_parser = :all, parse_remainder = :default, fail_over = false)
-        if selector_parser == :all
+
+      def parse_node(node)
+        begin
           key = nil
           r = {}
           case node.type
@@ -39,21 +54,23 @@ module NewsTagger
               r = {
                   :name => node.name,
                   :attributes => parse_attributes(node),
-                  :children => parse_node_set(node.children, :all, :default, fail_over)
+                  :children => parse_node_set(node.children)
               }
             when Nokogiri::XML::Node::HTML_DOCUMENT_NODE
               key = :html
               r = {
-                  :children => parse_node_set(node.children, :all, :default, fail_over)
+                  :children => parse_node_set(node.children)
               }
             else
               return nil
           end
           r.reject! { |k, v| v.nil? }
-          return {key => r}
+          {key => r}
+        ensure
+          node.unlink
         end
-        []
       end
+
     end
 
   end
