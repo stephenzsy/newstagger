@@ -18,6 +18,33 @@ module NewsTagger
         end
       end
 
+      # enforce select only 1 and there are only 1 to select
+      def select_only_node_to_parse(node, selectors, allow_empty = false)
+        node_set = node.css(*selectors)
+        raise "Only one to exist, however there are #{node_set.size}" if node_set.size > 1
+        raise "There must be one node matches '#{selectors.join ','}''" unless allow_empty or node_set.size == 1
+        begin
+          yield node_set.first
+        ensure
+          node_set.unlink
+        end
+      end
+
+      def ensure_empty_node(node)
+        if node.text?
+          node.unlink if node.content.strip.empty?
+          return true
+        end
+        node.children.each do |n|
+          ensure_empty_node n
+        end
+        if node.children.empty?
+          node.unlink
+          return true
+        end
+        raise "Node is not empty\n#{node.path}\n#{node.inspect}"
+      end
+
       private
       def parse_attributes(node)
         r = []

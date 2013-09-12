@@ -373,27 +373,6 @@ module NewsTagger
           result
         end
 
-        def handle_indented(level, lines)
-          result = []
-          until lines.empty?
-            line = lines.first
-            m = /^(\s*)(\S.*)?/.match(line)
-            indent_length = m[1].size
-            line = m[2]
-            if indent_length > level
-              result << handle_indented(indent_length, lines)
-            elsif indent_length == level
-              unless line.nil? or line.empty?
-                result << line
-              end
-              lines.shift
-            else
-              break
-            end
-          end
-          result.reject! { |e| e.nil? or e.empty? }
-          result
-        end
 
         def process_head_comments(comment, metadata)
           article_start_flag = false
@@ -424,18 +403,7 @@ module NewsTagger
           else
             comment_lines.each do |comment_line|
               comment_line.strip!
-              case comment_line
-                when /([^\s:]+):(.*)/
-                  metadata[:properties] ||= []
-                  metadata[:properties] << {
-                      :key => $~[1],
-                      :value => $~[2]
-                  }
-                when 'article start'
-                  article_start_flag = true
-                else
-                  raise("Unrecognized comment in .articleHeadlineBox:\n#{comment_line}")
-              end
+
             end
           end
 
@@ -482,22 +450,130 @@ module NewsTagger
             end
           end # class HeadMetaParser
 
+          class ArticleHeadlineBoxParser < HTMLParser
+
+            def parse(node)
+              r = []
+              c_metadata = []
+              select_only_node_to_parse(node, ['ul.cMetadata']) do |c_metadata_node|
+                c_metadata << select_only_node_to_parse(c_metadata_node, ['li.articleSection']) do |article_section_node|
+                  r_article_section = {:name => article_section_node.text.strip}
+                  select_only_node_to_parse article_section_node, ['a'], false do |a|
+                    r_article_section[:link] = a.attr('href')
+                  end
+                  {:article_section => r_article_section}
+                end
+                c_metadata << select_only_node_to_parse(c_metadata_node, ['.dateStamp'], false) do |date_stamp|
+                  text = date_stamp.text
+                  date = Time.parse(text)
+                  {:date_stamp => {:text => text, :date_stamp => date.iso8601}}
+                end
+                ensure_empty_node c_metadata_node
+              end
+              node.children.each do |n|
+                if n.comment?
+                  lines = n.content.split "\n"
+                  if lines.size == 1
+                    parsed_comment = parse_single_line_comment(n.content) do |state|
+                      yield state
+                    end
+                    c_metadata << parsed_comment unless parsed_comment.nil?
+                  else
+                    c_metadata += parse_multi_line_comment(lines)
+                  end
+                  n.unlink
+                end
+              end
+              r << {:c_metadata => c_metadata} unless c_metadata.empty?
+              select_only_node_to_parse(node, 'h1') do |h1|
+                r << {:headline => h1.text.strip}
+              end
+              select_only_node_to_parse(node, 'h2.subhead') do |h2|
+                r << {:subhead => h2.text.strip}
+              end
+              ensure_empty_node node
+              r
+            end
+
+            private
+            def parse_single_line_comment(line)
+              line.strip!
+              case line
+                when /([^\s:]+):(.*)/
+                  return {:key_value => {:key => $~[1], :value => $~[2]}}
+                when 'article start'
+                  yield ({:article_start_flag => true})
+                else
+                  raise("Unrecognized comment in .articleHeadlineBox:\n#{line}")
+              end
+              nil
+            end
+
+            def parse_multi_line_comment(lines)
+              lines.shift if lines.first.empty?
+              lines.pop if lines.last.empty?
+              r = []
+              until lines.empty? do
+                line = lines.first
+                if line.match /^CODE=(\S*) SYMBOL=(\S*)/
+                  r << {:code_symbol => {:code => $~[1], :symbol => $~[2]}}
+                  lines.shift
+                  next
+                end
+                r << {:tree => handle_indented(0, lines)}
+              end
+              r
+            end
+
+            def handle_indented(level, lines)
+              result = []
+              until lines.empty?
+                line = lines.first
+                m = /^(\s*)(\S.*)?/.match(line)
+                indent_length = m[1].size
+                line = m[2]
+                if indent_length > level
+                  result << handle_indented(indent_length, lines)
+                elsif indent_length == level
+                  unless line.nil? or line.empty?
+                    result << line
+                  end
+                  lines.shift
+                else
+                  break
+                end
+              end
+              result.reject! { |e| e.nil? or e.empty? }
+              result
+            end
+
+          end # class ArticleHeadlineBoxParser
 
           class ArticleParser < HTMLParser
             @@head_meta_parser = HeadMetaParser.new
+            @@article_headline_box_parser = ArticleHeadlineBoxParser.new
 
             def parse(node)
-              select_set_to_parse(node, ['head meta']) do |node_set|
+              article_start_flag = false
+
+              article = []
+              r = select_set_to_parse(node, ['head meta']) do |node_set|
                 r = []
                 node_set.each do |n|
                   nr = @@head_meta_parser.parse(n)
                   r << nr unless nr.nil?
                 end
-                {:article => [:head_meta => r]}
+                {:head_meta => r}
               end
+              article << r unless r.nil?
+              article += select_only_node_to_parse(node, ['.articleHeadlineBox'], true) do |n|
+                @@article_headline_box_parser.parse n do |state|
+                  article_start_flag = true if state[:article_start_flag]
+                end
+              end
+              {:article => article}
             end
-
-          end
+          end # class ArticleParser
 
 
         end
@@ -518,89 +594,6 @@ module NewsTagger
 
 
           parsed_metadata = {}
-          article_headline_box = doc.css('.articleHeadlineBox').first
-          if article_headline_box.nil?
-            article[:_no_head] = true
-          else
-            article_headline_box.css('.cMetadata').each do |metadata|
-              metadata.css('li.articleSection').each do |li|
-                li.css('a').each do |a|
-                  parsed_metadata[:article_section] ||= []
-                  parsed_metadata[:article_section] << {
-                      :url => a.attr('href'),
-                      :name => a.text
-                  }
-                  a.remove
-                end
-                li.children.each do |element|
-                  if element.text?
-                    parsed_metadata[:article_section] ||= []
-                    parsed_metadata[:article_section] << element.text
-                    element.remove
-                  end
-                end
-                li.remove if li.children.empty?
-              end
-              metadata.css('li.dateStamp').each do |li|
-                parsed_metadata[:date_stamp] = Time.parse(li.text()).strftime "%Y-%m-%d"
-                li.remove
-              end
-              article[:metadata] = parsed_metadata
-              metadata.remove if validate_all_processed metadata, '.cMetadata'
-            end
-
-            article_headline_box.children.each do |element|
-              if element.comment?
-                r = process_head_comments element, parsed_metadata
-                article_start_flag = true if r[:article_start_flag]
-                element.remove
-              elsif element.name == 'a' and element.has_attribute?('name')
-                parsed_metadata[:anchors] ||= []
-                parsed_metadata[:anchors] << element.attr('name')
-                element.remove
-              end
-            end
-            article_headline_box.css('h1').each do |h1|
-              article[:title] = h1.text.strip
-              h1.remove
-            end
-            article_headline_box.css('h2.subhead').each do |h2|
-              article[:subtitle] = h2.text.strip
-              h2.remove
-            end
-            article_headline_box.css('h5').each do |h|
-              article[:other_heads] ||= []
-              article[:other_heads] << {
-                  :head => h.text.strip,
-                  :level => /h(\d+)/.match(h.name)[1]
-              }
-              h.remove
-            end
-            article_headline_box.css('.columnist').each do |columnist|
-              columnist.css('.columnistByline').each do |columnist_by_line|
-                columnist_by_line.css('.socialByline').each do |social_by_line|
-                  by = nil
-                  begin
-                    by = process_social_by_line social_by_line
-                    social_by_line.remove if validate_all_processed social_by_line, '.columnist .social_by_line'
-                  rescue
-                    by = social_by_line.text.gsub("\n", ' ').squeeze(' ').strip
-                    social_by_line.remove
-                  end
-                  article[:by] = by unless by.nil?
-                end
-                columnist_by_line.remove if validate_all_processed columnist_by_line, '.columnist_by_line'
-              end
-              columnist.children.each do |element|
-                if element.text?
-                  element.remove if element.text.strip == '-'
-                end
-              end
-              columnist.css('.icon').remove
-              columnist.remove if validate_all_processed columnist, '.columnist'
-            end
-            article_headline_box.remove if validate_all_processed article_headline_box, '.articleHeadlineBox'
-          end
 
           article_story_body = doc.css("#article_story_body").first
           if article_story_body.nil?
