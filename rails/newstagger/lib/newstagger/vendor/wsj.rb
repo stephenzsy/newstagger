@@ -448,17 +448,49 @@ module NewsTagger
           include NewsTagger::Parsers
 
           class HeadMetaParser < HTMLParser
-            def parse(node)
 
+            @@HEAD_META_NAME_BLACKLIST = Set.new(
+                [
+                    'msapplication-task',
+                    'format-detection',
+                    "apple-itunes-app",
+                    "application-name",
+                    'sitedomain',
+                    'primaryproduct',
+                    'GOOGLEBOT'
+                ])
+
+            def parse(node)
+              return nil unless node.has_attribute? 'content'
+              type = nil
+              key = nil
+              if node.has_attribute? 'name'
+                type = :name
+                key = node.attr('name')
+              elsif node.has_attribute? 'property'
+                type = :property
+                key = node.attr('property')
+              else
+                return nil
+              end
+              case key
+                when /^(fb|twitter):/
+                  return nil
+              end
+              return nil if @@HEAD_META_NAME_BLACKLIST.include? key
+              {type => key, :value => node.attr('content')}
             end
-          end
+          end # class HeadMetaParser
+
 
           class ArticleParser < HTMLParser
+            @@head_meta_parser = HeadMetaParser.new
+
             def parse(node)
               select_set_to_parse(node, ['head meta']) do |node_set|
                 r = []
                 node_set.each do |n|
-                  nr = super(n)
+                  nr = @@head_meta_parser.parse(n)
                   r << nr unless nr.nil?
                 end
                 {:article => [:head_meta => r]}
@@ -484,18 +516,6 @@ module NewsTagger
           article_start_flag = false
           article_end_flag = false
 
-
-          doc.css('head meta').each do |meta|
-            if meta.has_attribute? 'name' and meta.has_attribute? 'content'
-              case meta.attr('name')
-                when /^twitter:.*/, /^fb:.*/
-                  next
-                else
-                  article[:head_meta] ||= []
-                  article[:head_meta] << {:name => meta.attr('name'), :content => meta.attr('content')}
-              end
-            end
-          end
 
           parsed_metadata = {}
           article_headline_box = doc.css('.articleHeadlineBox').first
