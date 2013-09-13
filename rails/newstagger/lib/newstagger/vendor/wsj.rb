@@ -587,9 +587,6 @@ module NewsTagger
                     attr.unlink
                   end
                 end
-                if node.matches? '.byName'
-                  p node
-                end
                 if node.children.size == 1
                   child_node = node.children.first
                   if child_node.text?
@@ -642,8 +639,18 @@ module NewsTagger
                 @@social_byline_parser.parse node
               end
               r << social_byline unless social_byline.nil?
-              paragraphs = select article_page_node, ['> p', '> h4', '> h5', '> h6', '> ul', '> a', '> blockquote'] do |selector, node|
-                parse_paragraph node
+              paragraphs = []
+              begin
+                article_page_node.children.each do |node|
+                  if node.comment? and node.content.strip == 'article end'
+                    yield({:article_end_flag => true})
+                    node.unlink
+                    next
+                  end
+                  paragraphs << parse_paragraph(node)
+                end
+                paragraphs.reject! { |x| x.nil? }
+                paragraphs = nil if paragraphs.empty?
               end
               r << {:paragraphs => paragraphs} unless paragraphs.nil?
               ensure_empty_node article_page_node
@@ -660,11 +667,33 @@ module NewsTagger
                   node.unlink
                 end
               end
+              # pre parse tree
               case node.name
-                when 'p'
+                when 'p' # handled by post
+                when 'a'
+                  if node.has_attribute?('href')
+                    case node.attr('href')
+                      when /^mailto:(.*)/
+                        raise "Need Developer"
+                      when /^\/public\/quotes\/main\.html\?type=(?<type>\w+)&symbol=(?<symbol>[\w\.:-]+)$/
+                        raise "Need Developer"
+                      else
+                        raise "Need Developer"
+                    end
+                  elsif node.has_attribute?('name')
+                    begin
+                      return {:anchor => {:name => node.attr('name')}}
+                    ensure
+                      ensure_empty_node node
+                    end
+                  else
+                    raise "Need Developer"
+                  end
                 else
-                  raise 'Need Developer: ' + "\n" + p.node.inspect
+                  raise 'Need Developer: ' + "\n" + node.inspect
               end
+
+              #parse tree
               parsed_children = []
               node.children.each do |n|
                 p = parse_paragraph n
@@ -676,8 +705,24 @@ module NewsTagger
                 end
                 parsed_children << p unless n.nil?
               end
+              r = {:p => parsed_children}
+
+              #post parse tree
+              case node.name
+                when 'p'
+                  if node.has_attribute?('class')
+                    if node.matches? '.articleVersion'
+                      r = {:article_version => parsed_children}
+                    else
+                      raise "Unrecognized Class of node p\n#{node.inspect}" unless node.attr('class').nil?
+                    end
+                  end
+                when 'a' # handled by pre
+                else
+                  raise 'Need Developer: ' + "\n" + node.inspect
+              end
               ensure_empty_node node
-              parsed_children
+              r
             end
 
           end #ArticlePageParser
@@ -689,6 +734,7 @@ module NewsTagger
 
             def parse(node)
               article_start_flag = false
+              article_end_flag = false
 
               article = []
               r = select_set_to_parse(node, ['head meta']) do |node_set|
@@ -710,9 +756,14 @@ module NewsTagger
                 article << {:_nobody => true}
               else
                 select_only_node_to_parse article_story_body_node, ['.articlePage'], true do |article_page_node|
-                  article += @@article_page_parser.parse(article_page_node)
+                  article += @@article_page_parser.parse(article_page_node) do |state|
+                    article_end_flag = true if state[:article_end_flag]
+                  end
                 end
               end
+
+              raise "Improper article start/end flag: start(#{article_start_flag}), end(#{article_end_flag})" unless (article_start_flag and article_end_flag)
+
               {:article => article}
             end
           end # class ArticleParser
@@ -723,7 +774,9 @@ module NewsTagger
         def process_article(url, content)
           fix_article_html! content
           doc = Nokogiri::HTML(content)
-          results = Parsers::ArticleParser.new.parse(doc)
+          article = Parsers::ArticleParser.new.parse(doc)
+
+          return article
 
           puts JSON.pretty_generate(results)
           raise 'Need Developer'
