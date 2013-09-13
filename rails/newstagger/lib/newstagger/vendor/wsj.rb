@@ -373,45 +373,6 @@ module NewsTagger
           result
         end
 
-
-        def process_head_comments(comment, metadata)
-          article_start_flag = false
-          comment_lines = comment.content.split("\n")
-          if comment_lines.length > 1
-            # multiline comment
-            until comment_lines.empty?
-              line = comment_lines.first
-              if line.empty?
-                comment_lines.shift
-                next
-              end
-
-              if line.match /^CODE=(\S*) SYMBOL=(\S*)/
-                metadata[:codes] ||= []
-                metadata[:codes] << {
-                    :code => $~[1],
-                    :symbol => $~[2]
-                }
-                comment_lines.shift
-                next
-              end
-
-              metadata[:other] ||= []
-              metadata[:other] << handle_indented(0, comment_lines)
-
-            end
-          else
-            comment_lines.each do |comment_line|
-              comment_line.strip!
-
-            end
-          end
-
-          {
-              :article_start_flag => article_start_flag
-          }
-        end
-
         module Parsers
           include NewsTagger::Parsers
 
@@ -458,7 +419,7 @@ module NewsTagger
               select_only_node_to_parse(node, ['ul.cMetadata']) do |c_metadata_node|
                 c_metadata << select_only_node_to_parse(c_metadata_node, ['li.articleSection']) do |article_section_node|
                   r_article_section = {:name => article_section_node.text.strip}
-                  select_only_node_to_parse article_section_node, ['a'], false do |a|
+                  select_only_node_to_parse article_section_node, ['a'], true do |a|
                     r_article_section[:link] = a.attr('href')
                   end
                   {:article_section => r_article_section}
@@ -549,9 +510,182 @@ module NewsTagger
 
           end # class ArticleHeadlineBoxParser
 
+          class SocialBylineParser < HTMLParser
+
+            class By_li_star_Rule < NewsTagger::Parsers::ParserRules::RuleBase
+              def validate?(node_seq, parent_node)
+                return false unless parent_node.element? and parent_node.name == 'ul'
+                state = :S
+                node_seq.each do |node|
+                  if node.text? and node.content.strip.empty?
+                    node.unlink
+                    next
+                  end
+                  case state
+                    when :S
+                      if node.text? and node.content.strip.downcase == 'by'
+                        state = :by
+                        next
+                      end
+                      return false
+                    when :by, :li_separator
+                      if node.element? and node.name == 'li'
+                        state = :li
+                        next
+                      end
+                      return false
+                    when :li
+                      if node.text? and ['and'].include? node.content.strip.downcase
+                        state = :li_separator
+                        next
+                      end
+                      return false
+                  end
+                end
+                case state
+                  when :li
+                    return true
+                end
+                false
+              end
+
+              def parse(node_seq)
+                r = []
+                state = :S
+                node_seq.each do |node|
+                  case state
+                    when :S
+                      if node.text? and node.content.strip.downcase == 'by'
+                        state = :by
+                        next
+                      end
+                      return false
+                    when :by, :li_separator
+                      if node.element? and node.name == 'li'
+                        r << {:author => parse_li(node)}
+                        state = :li
+                        next
+                      end
+                    when :li
+                      if node.text? and ['and'].include? node.content.strip.downcase
+                        state = :li_separator
+                        next
+                      end
+                  end
+                end
+                r.reject! { |e| e.nil? }
+                node_seq.unlink
+                return nil if r.empty?
+                r
+              end
+
+              def parse_li(node)
+                r = []
+                node.attributes.each do |name, attr|
+                  if name.match /data-(\S+)/
+                    r << {:data => {:name => $~[1], :value => attr.content}}
+                    attr.unlink
+                  end
+                end
+                if node.matches? '.byName'
+                  p node
+                end
+                if node.children.size == 1
+                  child_node = node.children.first
+                  if child_node.text?
+                    r << {:name => child_node.content.strip}
+                    child_node.unlink
+                  elsif child_node.name == 'a'
+                    attribute_value = child_node.attr('href')
+                    r << {:link => attribute_value} unless attribute_value.nil?
+                    cc_node = child_node.children.first
+                    if cc_node.text?
+                      r << {:name => cc_node.content.strip}
+                      cc_node.unlink
+                    end
+                    ensure_empty_node child_node
+                  end
+                end
+                ensure_empty_node node
+                r.reject! { |x| x.nil? }
+                return r
+              end
+            end
+
+            def parse(node)
+              node.css('#connectButton').unlink
+              node_seq = node.children
+              matched = false
+              begin
+                [By_li_star_Rule.new].each do |rule|
+                  if rule.validate? node_seq, node
+                    matched = true
+                    r = rule.parse node_seq
+                    return nil if r.nil?
+                    ensure_empty_node node
+                    return {:social_byline => r}
+                  end
+                end
+                raise "No rule matches the .socialByline node sequence.\n#{node_seq.inspect}"
+              ensure
+                node_seq.unlink if matched
+              end
+            end
+          end
+
+          class ArticlePageParser < HTMLParser
+            @@social_byline_parser = SocialBylineParser.new
+
+            def parse(article_page_node)
+              r = []
+              social_byline = select_only_node_to_parse article_page_node, ['.socialByline'] do |node|
+                @@social_byline_parser.parse node
+              end
+              r << social_byline unless social_byline.nil?
+              paragraphs = select article_page_node, ['> p', '> h4', '> h5', '> h6', '> ul', '> a', '> blockquote'] do |selector, node|
+                parse_paragraph node
+              end
+              r << {:paragraphs => paragraphs} unless paragraphs.nil?
+              ensure_empty_node article_page_node
+              r
+            end
+
+            def parse_paragraph(node)
+              if node.text?
+                begin
+                  text = node.content.strip.gsub(/\s+/, ' ')
+                  return nil if text.empty?
+                  return {:text => text}
+                ensure
+                  node.unlink
+                end
+              end
+              case node.name
+                when 'p'
+                else
+                  raise 'Need Developer: ' + "\n" + p.node.inspect
+              end
+              parsed_children = []
+              node.children.each do |n|
+                p = parse_paragraph n
+                last_p = parsed_children.last
+                if  not last_p.nil? and last_p.has_key? :text and p.has_key? :text
+                  # append the text to last one
+                  last_p[:text] = last_p[:text] + ' ' + p[:text]
+                  next
+                end
+                parsed_children << p unless n.nil?
+              end
+              ensure_empty_node node
+              parsed_children
+            end
+
+          end #ArticlePageParser
+
           class ArticleParser < HTMLParser
             @@head_meta_parser = HeadMetaParser.new
             @@article_headline_box_parser = ArticleHeadlineBoxParser.new
+            @@article_page_parser= ArticlePageParser.new
 
             def parse(node)
               article_start_flag = false
@@ -571,6 +705,14 @@ module NewsTagger
                   article_start_flag = true if state[:article_start_flag]
                 end
               end
+              article_story_body_node = node.css('#article_story_body').first
+              if article_story_body_node.nil?
+                article << {:_nobody => true}
+              else
+                select_only_node_to_parse article_story_body_node, ['.articlePage'], true do |article_page_node|
+                  article += @@article_page_parser.parse(article_page_node)
+                end
+              end
               {:article => article}
             end
           end # class ArticleParser
@@ -586,67 +728,55 @@ module NewsTagger
           puts JSON.pretty_generate(results)
           raise 'Need Developer'
 
-          article = {
-              :url => url,
-          }
-          article_start_flag = false
-          article_end_flag = false
-
-
           parsed_metadata = {}
 
-          article_story_body = doc.css("#article_story_body").first
-          if article_story_body.nil?
-            article[:_no_body] = true
-          else
-            article_story_body.css(".articlePage").each do |article_page|
-              article_page.css('ul.socialByline').each do |social_by_line|
-                by = nil
-                begin
-                  by = process_social_by_line social_by_line
-                  social_by_line.remove if validate_all_processed social_by_line, '.columnist .social_by_line'
-                rescue
-                  by = social_by_line.text.gsub("\n", ' ').squeeze(' ').strip
-                  social_by_line.remove
-                end
-                article[:by] = by unless by.nil?
+          doc.css(".articlePage").each do |article_page|
+            article_page.css('ul.socialByline').each do |social_by_line|
+              by = nil
+              begin
+                by = process_social_by_line social_by_line
+                social_by_line.remove if validate_all_processed social_by_line, '.columnist .social_by_line'
+              rescue
+                by = social_by_line.text.gsub("\n", ' ').squeeze(' ').strip
+                social_by_line.remove
               end
-              fix_article_page! article_page
-              article_page.children.filter('p, h4, h5, h6, ul, a, blockquote').each do |node|
-                paragraph = process_paragraph node
-                article[:paragraphs] ||= []
-                article[:paragraphs] << paragraph unless paragraph.nil?
-                node.remove if validate_all_processed node, '.articlePage > p'
-              end
-              article_page.children.filter('cite').each do |cite|
-                article[:cites] ||= []
-                article[:cites] << cite.text
-                cite.remove
-              end
-              article_page.css('.insetContent', '.insetCol3wide', '.insetCol6wide', '.embedType-interactive').remove
-              article_page.children.each do |element|
-                if element.comment?
-                  if element.content.strip == 'article end'
-                    article_end_flag = true
-                    element.remove
-                    next
-                  end
-                end
-                case element.name
-                  when 'div'
-                    element.css('.offDutyMoreSection').remove
-                    element.remove if validate_all_processed element, '.articlePage div'
-                    next
-                  when 'table'
-                    recursive_remove_if_empty! element
-                    # TODO parse table
-                    element.remove
-                    next
-                end
-              end
-
-              article_page.remove if validate_all_processed article_page, '.articlePage'
+              article[:by] = by unless by.nil?
             end
+            fix_article_page! article_page
+            article_page.children.filter('p, h4, h5, h6, ul, a, blockquote').each do |node|
+              paragraph = process_paragraph node
+              article[:paragraphs] ||= []
+              article[:paragraphs] << paragraph unless paragraph.nil?
+              node.remove if validate_all_processed node, '.articlePage > p'
+            end
+            article_page.children.filter('cite').each do |cite|
+              article[:cites] ||= []
+              article[:cites] << cite.text
+              cite.remove
+            end
+            article_page.css('.insetContent', '.insetCol3wide', '.insetCol6wide', '.embedType-interactive').remove
+            article_page.children.each do |element|
+              if element.comment?
+                if element.content.strip == 'article end'
+                  article_end_flag = true
+                  element.remove
+                  next
+                end
+              end
+              case element.name
+                when 'div'
+                  element.css('.offDutyMoreSection').remove
+                  element.remove if validate_all_processed element, '.articlePage div'
+                  next
+                when 'table'
+                  recursive_remove_if_empty! element
+                  # TODO parse table
+                  element.remove
+                  next
+              end
+            end
+
+            article_page.remove if validate_all_processed article_page, '.articlePage'
           end
 
           raise "Improper article start/end flag: start(#{article_start_flag}), end(#{article_end_flag})" unless (article_start_flag and article_end_flag) or

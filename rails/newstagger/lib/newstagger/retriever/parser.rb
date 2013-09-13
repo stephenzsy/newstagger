@@ -3,12 +3,7 @@ require 'nokogiri'
 module NewsTagger
   module Parsers
 
-    class HTMLParser
-
-      def parse(node)
-        parse_node(node)
-      end
-
+    module Utils
       def select_set_to_parse(node, selectors)
         node_set = node.css(*selectors)
         begin
@@ -22,7 +17,8 @@ module NewsTagger
       def select_only_node_to_parse(node, selectors, allow_empty = false)
         node_set = node.css(*selectors)
         raise "Only one to exist, however there are #{node_set.size}" if node_set.size > 1
-        raise "There must be one node matches '#{selectors.join ','}''" unless allow_empty or node_set.size == 1
+        raise "There must be one node matches '#{selectors.join ','}'" unless allow_empty or node_set.size == 1
+        return nil if node_set.empty?
         begin
           yield node_set.first
         ensure
@@ -31,6 +27,7 @@ module NewsTagger
       end
 
       def ensure_empty_node(node)
+        return true if node.nil?
         if node.text?
           node.unlink if node.content.strip.empty?
           return true
@@ -45,16 +42,63 @@ module NewsTagger
         raise "Node is not empty\n#{node.path}\n#{node.inspect}"
       end
 
-      private
-      def parse_attributes(node)
+      def select(node, selectors)
+        sset = []
+        selectors.each do |selector|
+          sset << {:selector => selector, :node_set => node.css(selector)}
+        end
+        node_set = node.css(*selectors)
+        begin
+          r = []
+          node_set.each do |n|
+            sset.each do |s|
+              if s[:node_set].include? n
+                nr = yield(s[:selector], n)
+                r << nr unless nr.nil?
+                next
+              end
+            end
+          end
+          return nil if r.empty?
+          r
+        ensure
+          node_set.unlink
+        end
+      end
+    end
+
+    module ParserRules
+      class RuleBase
+        include Parsers::Utils
+
+        def validate?(node_sequence, parent_node)
+          true
+        end
+
+        def parse(node_sequence)
+          HTMLParser.parse_node_set(node_sequence)
+        end
+      end
+    end
+
+    class HTMLParser
+      include Utils
+
+      def parse(node)
+        HTMLParser.parse_node(node)
+      end
+
+
+      def self.parse_attributes(node)
         r = []
         node.attributes.each do |name, attr|
           r << {:name => name, :value => attr.value}
         end
+        return nil if r.empty?
         r
       end
 
-      def parse_node_set(node_set)
+      def self.parse_node_set(node_set)
         r = []
         node_set.each do |node|
           parsed_node = parse_node(node)
@@ -64,8 +108,7 @@ module NewsTagger
         r
       end
 
-
-      def parse_node(node)
+      def self.parse_node(node)
         begin
           key = nil
           r = {}
