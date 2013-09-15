@@ -11,7 +11,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '2013091503'
-        PROCESSOR_PATCH = 5
+        PROCESSOR_PATCH = 6
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -519,12 +519,9 @@ module NewsTagger
               f = []
               begin
                 article_page_node.children.each do |node|
-                  if node.comment? and node.content.strip == 'article end'
-                    yield({:article_end_flag => true})
-                    node.unlink
-                    next
+                  p, ff = parse_paragraph(node) do |state|
+                    yield state
                   end
-                  p, ff = parse_paragraph(node)
                   paragraphs << p
                   f << ff unless ff.nil?
                 end
@@ -545,7 +542,11 @@ module NewsTagger
             end
 
             def parse_paragraph(node)
-              if node.text?
+              if node.comment? and node.content.strip == 'article end'
+                yield({:article_end_flag => true})
+                node.unlink
+                return nil
+              elsif node.text?
                 begin
                   text = node.content.strip.gsub(/\s+/, ' ')
                   return nil if text.empty?
@@ -582,7 +583,9 @@ module NewsTagger
               #parse tree
               parsed_children = []
               node.children.each do |n|
-                p, ff = parse_paragraph n
+                p, ff = parse_paragraph n do |state|
+                  yield state
+                end
                 f << ff unless ff.nil?
                 last_p = parsed_children.last
                 if not (last_p.nil? or p.nil?) and last_p.has_key? :text and p.has_key? :text
