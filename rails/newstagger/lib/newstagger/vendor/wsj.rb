@@ -10,7 +10,7 @@ module NewsTagger
       class Retriever < NewsTagger::Retriever::S3CachedRetriever
 
         WEBSITE_VERSION = '20130825'
-        PROCESSOR_VERSION = '20130909'
+        PROCESSOR_VERSION = '20130909-dev'
         PROCESSOR_PATCH = 1
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
@@ -416,15 +416,15 @@ module NewsTagger
             def parse(node)
               r = []
               c_metadata = []
-              select_only_node_to_parse(node, ['ul.cMetadata']) do |c_metadata_node|
-                c_metadata << select_only_node_to_parse(c_metadata_node, ['li.articleSection']) do |article_section_node|
+              select_only_node_to_parse(node, 'ul.cMetadata') do |c_metadata_node|
+                c_metadata << select_only_node_to_parse(c_metadata_node, 'li.articleSection') do |article_section_node|
                   r_article_section = {:name => article_section_node.text.strip}
-                  select_only_node_to_parse article_section_node, ['a'], true do |a|
+                  select_only_node_to_parse article_section_node, 'a', true do |a|
                     r_article_section[:link] = a.attr('href')
                   end
                   {:article_section => r_article_section}
                 end
-                c_metadata << select_only_node_to_parse(c_metadata_node, ['.dateStamp'], false) do |date_stamp|
+                c_metadata << select_only_node_to_parse(c_metadata_node, '.dateStamp') do |date_stamp|
                   text = date_stamp.text
                   date = Time.parse(text)
                   {:date_stamp => {:text => text, :date_stamp => date.iso8601}}
@@ -449,7 +449,7 @@ module NewsTagger
               select_only_node_to_parse(node, 'h1') do |h1|
                 r << {:headline => h1.text.strip}
               end
-              select_only_node_to_parse(node, 'h2.subhead') do |h2|
+              select_only_node_to_parse(node, 'h2.subhead', true) do |h2|
                 r << {:subhead => h2.text.strip}
               end
               ensure_empty_node node
@@ -535,7 +535,7 @@ module NewsTagger
                       end
                       return false
                     when :li
-                      if node.text? and ['and'].include? node.content.strip.downcase
+                      if node.text? and ['and', ','].include? node.content.strip.downcase
                         state = :li_separator
                         next
                       end
@@ -567,7 +567,7 @@ module NewsTagger
                         next
                       end
                     when :li
-                      if node.text? and ['and'].include? node.content.strip.downcase
+                      if node.text? and ['and', ','].include? node.content.strip.downcase
                         state = :li_separator
                         next
                       end
@@ -634,12 +634,18 @@ module NewsTagger
             @@social_byline_parser = SocialBylineParser.new
 
             def parse(article_page_node)
+              article_page_node.css('.insetContent', '.insetCol3wide', 'insetCol6wide', '.offDutyMoreSection').unlink
+
+              # .socialByLine
               r = []
-              social_byline = select_only_node_to_parse article_page_node, ['.socialByline'] do |node|
+              social_byline = select_only_node_to_parse article_page_node, '.socialByline', true do |node|
                 @@social_byline_parser.parse node
               end
               r << social_byline unless social_byline.nil?
+
+              # paragraphs
               paragraphs = []
+              f = []
               begin
                 article_page_node.children.each do |node|
                   if node.comment? and node.content.strip == 'article end'
@@ -647,12 +653,22 @@ module NewsTagger
                     node.unlink
                     next
                   end
-                  paragraphs << parse_paragraph(node)
+                  p, ff = parse_paragraph(node)
+                  paragraphs << p
+                  f << ff unless ff.nil?
                 end
                 paragraphs.reject! { |x| x.nil? }
                 paragraphs = nil if paragraphs.empty?
               end
-              r << {:paragraphs => paragraphs} unless paragraphs.nil?
+              if f.empty?
+                f = nil
+              elsif f.size == 1
+                f = f.first
+              end
+              rr = {}
+              rr[:paragraphs] = paragraphs unless paragraphs.nil?
+              rr[:flattened] = f unless f.nil?
+              r << rr unless rr.empty?
               ensure_empty_node article_page_node
               r
             end
@@ -662,67 +678,98 @@ module NewsTagger
                 begin
                   text = node.content.strip.gsub(/\s+/, ' ')
                   return nil if text.empty?
-                  return {:text => text}
+                  return {:text => text}, text
                 ensure
                   node.unlink
                 end
               end
+
               # pre parse tree
               case node.name
-                when 'p' # handled by post
                 when 'a'
-                  if node.has_attribute?('href')
-                    case node.attr('href')
-                      when /^mailto:(.*)/
-                        raise "Need Developer"
-                      when /^\/public\/quotes\/main\.html\?type=(?<type>\w+)&symbol=(?<symbol>[\w\.:-]+)$/
-                        raise "Need Developer"
-                      else
-                        raise "Need Developer"
-                    end
-                  elsif node.has_attribute?('name')
+                  if not node.has_attribute?('href') and node.has_attribute?('name')
                     begin
                       return {:anchor => {:name => node.attr('name')}}
                     ensure
-                      ensure_empty_node node
+                      node.unlink
                     end
-                  else
-                    raise "Need Developer"
                   end
-                else
-                  raise 'Need Developer: ' + "\n" + node.inspect
+                when 'span'
+                  if node.has_attribute? 'data-widget'
+                    begin
+                      return {:widget => {:ticker_name => node.attr('data-ticker-name')}}
+                    ensure
+                      node.unlink
+                    end
+                  end
               end
 
+              f = []
               #parse tree
               parsed_children = []
               node.children.each do |n|
-                p = parse_paragraph n
+                p, ff = parse_paragraph n
+                f << ff unless ff.nil?
                 last_p = parsed_children.last
-                if  not last_p.nil? and last_p.has_key? :text and p.has_key? :text
+                if not last_p.nil? and last_p.has_key? :text and p.has_key? :text
                   # append the text to last one
                   last_p[:text] = last_p[:text] + ' ' + p[:text]
                   next
                 end
-                parsed_children << p unless n.nil?
+                parsed_children << p unless p.nil?
               end
               r = {:p => parsed_children}
+              if f.empty?
+                f = nil
+              elsif f.size == 1
+                f = f.first
+              end
 
               #post parse tree
               case node.name
+                when /h(\d+)/
+                  r = {:heading => parsed_children, :level => $~[1].to_i}
+                when 'cite'
+                  r = {:cite => parsed_children}
                 when 'p'
-                  if node.has_attribute?('class')
-                    if node.matches? '.articleVersion'
-                      r = {:article_version => parsed_children}
-                    else
-                      raise "Unrecognized Class of node p\n#{node.inspect}" unless node.attr('class').nil?
-                    end
+                  if node.has_attribute?('class') and node.matches? '.articleVersion'
+                    r = {:article_version => parsed_children}
+                    f = nil
+                  else
+                    raise "Unrecognized Class of node p\n#{node.inspect}" unless node.attr('class').nil?
                   end
-                when 'a' # handled by pre
+                when 'strong'
+                  r = {:strong => parsed_children}
+                when 'em'
+                  r = {:em => parsed_children}
+                when 'a'
+                  if node.matches? '.topicLink'
+                    return {:topic_link => {:link => node.attr('href'), :_ => parsed_children}}
+                  end
+                  if node.has_attribute?('href')
+                    begin
+                      case node.attr('href')
+                        when /^mailto:(.*)/
+                          r = {:email => {:email_address => $~[1], :_ => parsed_children}}
+                        when /^\/public\/quotes\/main\.html\?type=(?<type>\w+)&symbol=(?<symbol>[\w\.:-]+)$/
+                          r = {:quote => {:type => $~[:type], :symbol => $~[:symbol], :_ => parsed_children}}
+                        else
+                          r = {:link => {:url => node.attr('href'), :_ => parsed_children}}
+                      end
+                    ensure
+                      node.unlink
+                    end
+                  else
+                    p node
+                    raise "Need Developer"
+                  end
+                when 'div'
+                  ensure_empty_node node
                 else
                   raise 'Need Developer: ' + "\n" + node.inspect
               end
               ensure_empty_node node
-              r
+              return r, f
             end
 
           end #ArticlePageParser
@@ -746,8 +793,8 @@ module NewsTagger
                 {:head_meta => r}
               end
               article << r unless r.nil?
-              article += select_only_node_to_parse(node, ['.articleHeadlineBox'], true) do |n|
-                @@article_headline_box_parser.parse n do |state|
+              select_only_node_to_parse(node, '.articleHeadlineBox', true) do |n|
+                article += @@article_headline_box_parser.parse n do |state|
                   article_start_flag = true if state[:article_start_flag]
                 end
               end
@@ -755,7 +802,7 @@ module NewsTagger
               if article_story_body_node.nil?
                 article << {:_nobody => true}
               else
-                select_only_node_to_parse article_story_body_node, ['.articlePage'], true do |article_page_node|
+                select_only_node_to_parse article_story_body_node, '.articlePage', true do |article_page_node|
                   article += @@article_page_parser.parse(article_page_node) do |state|
                     article_end_flag = true if state[:article_end_flag]
                   end
@@ -768,15 +815,15 @@ module NewsTagger
             end
           end # class ArticleParser
 
-
-        end
+        end # module Parsers
 
         def process_article(url, content)
           fix_article_html! content
           doc = Nokogiri::HTML(content)
-          article = Parsers::ArticleParser.new.parse(doc)
+          r = Parsers::ArticleParser.new.parse(doc)
+          r[:url] = url
 
-          return article
+          return r
 
           puts JSON.pretty_generate(results)
           raise 'Need Developer'
@@ -796,12 +843,6 @@ module NewsTagger
               article[:by] = by unless by.nil?
             end
             fix_article_page! article_page
-            article_page.children.filter('p, h4, h5, h6, ul, a, blockquote').each do |node|
-              paragraph = process_paragraph node
-              article[:paragraphs] ||= []
-              article[:paragraphs] << paragraph unless paragraph.nil?
-              node.remove if validate_all_processed node, '.articlePage > p'
-            end
             article_page.children.filter('cite').each do |cite|
               article[:cites] ||= []
               article[:cites] << cite.text
@@ -817,10 +858,6 @@ module NewsTagger
                 end
               end
               case element.name
-                when 'div'
-                  element.css('.offDutyMoreSection').remove
-                  element.remove if validate_all_processed element, '.articlePage div'
-                  next
                 when 'table'
                   recursive_remove_if_empty! element
                   # TODO parse table

@@ -197,11 +197,13 @@ module NewsTagger
 
       def retrieve_processed_article(url, datetime)
         result = @cache.retrieve_from_cache("#{@topic_vendor}:article:processed", datetime.strftime('%Y/%m/%d/'), url) do |content, metadata={}|
+          break (false) if metadata[:p_version] < @processor_version or metadata[:p_version].end_with? '-dev'
           yield JSON.parse content, :symbolize_names => true
+          true
         end
         unless result
           result = super(url, datetime) do |normalized_article|
-            @cache.send_to_cache "#{@topic_vendor}:article:processed", datetime.strftime('%Y/%m/%d/'), url, JSON.generate(normalized_article), :json, {
+            @cache.send_to_cache "#{@topic_vendor}:article:processed", datetime.strftime('%Y/%m/%d/'), url, JSON.pretty_generate(normalized_article), :json, {
                 :url => url,
                 :processed_time => Time.now.utc.iso8601(3),
                 :p_version => @processor_version

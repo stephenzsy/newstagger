@@ -14,10 +14,10 @@ module NewsTagger
       end
 
       # enforce select only 1 and there are only 1 to select
-      def select_only_node_to_parse(node, selectors, allow_empty = false)
-        node_set = node.css(*selectors)
+      def select_only_node_to_parse(node, selector, allow_empty = false)
+        node_set = node.css(selector)
         raise "Only one to exist, however there are #{node_set.size}" if node_set.size > 1
-        raise "There must be one node matches '#{selectors.join ','}'" unless allow_empty or node_set.size == 1
+        raise "There must be one node matches '#{selector}'" unless allow_empty or node_set.size == 1
         return nil if node_set.empty?
         begin
           yield node_set.first

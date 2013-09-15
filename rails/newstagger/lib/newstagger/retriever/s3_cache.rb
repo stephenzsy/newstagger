@@ -51,8 +51,7 @@ module NewsTagger
         unless cache_cutoff.nil?
           return false if metadata[cache_cutoff_key].nil? or Time.parse(metadata[cache_cutoff_key]) < cache_cutoff
         end
-        yield content
-        true
+        yield content, metadata
       end
 
       def send_to_cache(topic, key_part, url, content, document_type, metadata={}, reduced_redundancy = true)
