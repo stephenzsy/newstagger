@@ -749,7 +749,7 @@ module NewsTagger
         def cleanup_status
           @error_table.items.each do |item|
             next unless item.hash_value == 'wsj-error'
-            if item['processor_version'] < PROCESSOR_VERSION
+            if item.attributes['processor_version'] < PROCESSOR_VERSION
               item.delete
               next
             end
