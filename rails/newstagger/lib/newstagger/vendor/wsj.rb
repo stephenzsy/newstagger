@@ -11,7 +11,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '2013091503'
-        PROCESSOR_PATCH = 3
+        PROCESSOR_PATCH = 4
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -211,6 +211,7 @@ module NewsTagger
                 r = []
                 state = :S
                 loc_last_authors = []
+                last_author = nil
                 node_seq.each do |node|
                   case state
                     when :S
@@ -223,16 +224,29 @@ module NewsTagger
                       end
                     when :by, :li_separator
                       if node.element? and ['li', 'cite'].include? node.name
-                        author = {:author => parse_li(node)}
+                        last_author = author = {:author => parse_li(node)}
                         loc_last_authors << author
                         r << author
                         state = :li
                         next
                       end
+                    when :li_continue
+                      if node.element? and node.name == 'li'
+                        text = parse_li(node).each do |l|
+                          break l[:name] if l.has_key? :name
+                        end
+                        last_author[:author].each do |l|
+                          if l.has_key? :name
+                            l[:name] += " #{text}"
+                            break
+                          end
+                        end
+                        state = :li
+                        next
+                      end
                     when :li
-
                       if node.element? and ['li', 'cite'].include? node.name
-                        author = {:author => parse_li(node)}
+                        last_author = author = {:author => parse_li(node)}
                         loc_last_authors << author
                         r << author
                         state = :li
@@ -241,6 +255,15 @@ module NewsTagger
                         text = node.content.strip
                         if text == '|'
                           state = :cite_separator
+                        elsif text == 'DE'
+                          # foreign name
+                          last_author[:author].each do |l|
+                            if l.has_key? :name
+                              l[:name] += " #{text}"
+                              break
+                            end
+                          end
+                          state = :li_continue
                         elsif text.match /^(in|at) (.*) and$/
                           location = $~[1]
                           loc_last_authors.each do |author|
