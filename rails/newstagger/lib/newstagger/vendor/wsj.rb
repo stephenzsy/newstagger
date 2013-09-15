@@ -304,7 +304,7 @@ module NewsTagger
               # .cMetadata
               c_metadata = []
               select_only_node_to_parse(node, 'ul.cMetadata') do |c_metadata_node|
-                c_metadata << select_only_node_to_parse(c_metadata_node, 'li.articleSection') do |article_section_node|
+                c_metadata << select_only_node_to_parse(c_metadata_node, 'li.articleSection', true) do |article_section_node|
                   r_article_section = {:name => article_section_node.text.strip}
                   select_only_node_to_parse article_section_node, 'a', true do |a|
                     r_article_section[:link] = a.attr('href')
