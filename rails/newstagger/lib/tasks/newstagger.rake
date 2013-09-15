@@ -70,7 +70,7 @@ namespace :newstagger do
       require 'newstagger/vendor/wsj'
 
       retriever = NewsTagger::Vendor::WSJ::Retriever.new
-      timeout(3600) do
+      timeout(15.minutes) do
         retriever.cleanup_status
       end
     end
