@@ -651,16 +651,18 @@ module NewsTagger
                                       'processor_version' => PROCESSOR_VERSION,
                                       'processor_patch' => PROCESSOR_PATCH,
                                       'logged_at' => Time.now.utc.iso8601)
-            @sns.topics[@sns_notification_topic].publish(([
-                'Error in Execution',
-                'Topic: wsj-error',
-                "Date of Error: #{local_date.iso8601}",
-                "Processor Version: #{PROCESSOR_VERSION}",
-                "Processor Patch: #{PROCESSOR_PATCH}",
-                "Time of Execution: #{Time.now.utc.iso8601}",
-                "Error Message: #{e.message}",
-                'Stack Trace:',
-            ] + e.backtrace).join("\n"))
+            if false
+              @sns.topics[@sns_notification_topic].publish(([
+                  'Error in Execution',
+                  'Topic: wsj-error',
+                  "Date of Error: #{local_date.iso8601}",
+                  "Processor Version: #{PROCESSOR_VERSION}",
+                  "Processor Patch: #{PROCESSOR_PATCH}",
+                  "Time of Execution: #{Time.now.utc.iso8601}",
+                  "Error Message: #{e.message}",
+                  'Stack Trace:',
+              ] + e.backtrace).join("\n"))
+            end
           end
         end
 
