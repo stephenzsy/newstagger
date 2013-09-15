@@ -10,7 +10,7 @@ module NewsTagger
       class Retriever < NewsTagger::Retriever::S3CachedRetriever
 
         WEBSITE_VERSION = '20130825'
-        PROCESSOR_VERSION = '20130915'
+        PROCESSOR_VERSION = '2013091501'
         PROCESSOR_PATCH = 1
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
