@@ -203,7 +203,7 @@ module NewsTagger
         end
         unless result
           result = super(url, datetime) do |normalized_article|
-            @cache.send_to_cache "#{@topic_vendor}:article:processed", datetime.strftime('%Y/%m/%d/'), url, JSON.pretty_generate(normalized_article), :json, {
+            @cache.send_to_cache "#{@topic_vendor}:article:processed", datetime.strftime('%Y/%m/%d/'), url, JSON.generate(normalized_article), :json, {
                 :url => url,
                 :processed_time => Time.now.utc.iso8601(3),
                 :p_version => @processor_version
