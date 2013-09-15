@@ -11,7 +11,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '2013091503'
-        PROCESSOR_PATCH = 1
+        PROCESSOR_PATCH = 2
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -265,20 +265,10 @@ module NewsTagger
                       end
                     when :cite_separator
                       if node.name == 'cite'
-                        text = nil
-                        if node.one_level_text?
-                          text = node.children.first.content.strip
-                        elsif node.children.size == 1 and node.children.first.element? and node.children.first.name == 'li'
-                          li = node.children.first
-                          if li.one_level_text?
-                            text = node.children.first.content.strip
-                          end
-                        end
-                        unless text.nil?
-                          r << {:cite => text}
-                          state = :F
-                          next
-                        end
+                        text = node.text.strip
+                        r << {:cite => text}
+                        state = :F
+                        next
                       end
                   end
                   raise ParserRuleNotMatchException
