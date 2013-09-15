@@ -46,13 +46,18 @@ namespace :newstagger do
       end
     end
 
-    task :test_wsj => :environment do
+    task :test_wsj, [:date] => :environment do |t, args|
       require 'newstagger/vendor/wsj'
 
       retriever = NewsTagger::Vendor::WSJ::Retriever.new :test_mode => true
 
+      p args
       t = Time.now
-      t = ActiveSupport::TimeZone['America/New_York'].parse('2009-04-03')
+      if args[:date] == 'now'
+        t = Time.now
+      else
+        t = ActiveSupport::TimeZone['America/New_York'].parse(args[:date])
+      end
       count = 0
       retriever.retrieve t do |type, value|
         case type

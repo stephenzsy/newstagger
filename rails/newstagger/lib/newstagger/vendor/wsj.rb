@@ -11,7 +11,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '2013091503'
-        PROCESSOR_PATCH = 2
+        PROCESSOR_PATCH = 3
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -230,18 +230,25 @@ module NewsTagger
                         next
                       end
                     when :li
-                      if node.text?
+
+                      if node.element? and ['li', 'cite'].include? node.name
+                        author = {:author => parse_li(node)}
+                        loc_last_authors << author
+                        r << author
+                        state = :li
+                        next
+                      elsif node.text?
                         text = node.content.strip
                         if text == '|'
                           state = :cite_separator
-                        elsif text.match /^in (.*) and$/
+                        elsif text.match /^(in|at) (.*) and$/
                           location = $~[1]
                           loc_last_authors.each do |author|
                             author[:location] = location
                           end
                           loc_last_authors.clear
                           state = :li_separator
-                        elsif text.match /^in (.*)$/
+                        elsif text.match /^(in|at) (.*)$/
                           location = $~[1]
                           loc_last_authors.each do |author|
                             author[:location] = location
@@ -588,6 +595,8 @@ module NewsTagger
                   r = {:em => parsed_children}
                 when 'blockquote'
                   r = {:block_quote => parsed_children}
+                when 'no'
+                  r = {:no => parsed_children}
                 when 'a'
                   if node.matches? '.topicLink'
                     return {:topic_link => {:link => node.attr('href'), :_ => parsed_children}}
