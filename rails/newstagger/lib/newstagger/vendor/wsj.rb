@@ -10,7 +10,7 @@ module NewsTagger
       class Retriever < NewsTagger::Retriever::S3CachedRetriever
 
         WEBSITE_VERSION = '20130825'
-        PROCESSOR_VERSION = '2013091502'
+        PROCESSOR_VERSION = '2013091503'
         PROCESSOR_PATCH = 1
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
@@ -210,7 +210,7 @@ module NewsTagger
                 raise ParserRuleNotMatchException unless parent_node.element? and parent_node.name == 'ul'
                 r = []
                 state = :S
-                last_author = nil
+                loc_last_authors = []
                 node_seq.each do |node|
                   case state
                     when :S
@@ -223,8 +223,9 @@ module NewsTagger
                       end
                     when :by, :li_separator
                       if node.element? and ['li', 'cite'].include? node.name
-                        last_author = {:author => parse_li(node)}
-                        r << last_author
+                        author = {:author => parse_li(node)}
+                        loc_last_authors << author
+                        r << author
                         state = :li
                         next
                       end
@@ -233,14 +234,20 @@ module NewsTagger
                         text = node.content.strip
                         if text == '|'
                           state = :cite_separator
-
-                        elsif text.match /^in (.*)( and)?$/
-                          last_author[:location] = $~[1]
-                          if $~[2].nil?
-                            state = :F
-                          else
-                            state = :li_separator
+                        elsif text.match /^in (.*) and$/
+                          location = $~[1]
+                          loc_last_authors.each do |author|
+                            author[:location] = location
                           end
+                          loc_last_authors.clear
+                          state = :li_separator
+                        elsif text.match /^in (.*)$/
+                          location = $~[1]
+                          loc_last_authors.each do |author|
+                            author[:location] = location
+                          end
+                          loc_last_authors.clear
+                          state = :F
                         elsif ['and', ','].include? text.downcase
                           state = :li_separator
                         else
@@ -257,11 +264,21 @@ module NewsTagger
                         end
                       end
                     when :cite_separator
-                      if node.name == 'cite' and node.children.size == 1 and node.children.first.text?
-                        text = node.children.first.content.strip
-                        r << {:cite => text}
-                        state = :F
-                        next
+                      if node.name == 'cite'
+                        text = nil
+                        if node.one_level_text?
+                          text = node.children.first.content.strip
+                        elsif node.children.size == 1 and node.children.first.element? and node.children.first.name == 'li'
+                          li = node.children.first
+                          if li.one_level_text?
+                            text = node.children.first.content.strip
+                          end
+                        end
+                        unless text.nil?
+                          r << {:cite => text}
+                          state = :F
+                          next
+                        end
                       end
                   end
                   raise ParserRuleNotMatchException
