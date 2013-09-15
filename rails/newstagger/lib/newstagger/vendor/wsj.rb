@@ -10,7 +10,7 @@ module NewsTagger
       class Retriever < NewsTagger::Retriever::S3CachedRetriever
 
         WEBSITE_VERSION = '20130825'
-        PROCESSOR_VERSION = '20130909-dev'
+        PROCESSOR_VERSION = '20130915'
         PROCESSOR_PATCH = 1
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
@@ -118,261 +118,6 @@ module NewsTagger
           end
         end
 
-        def recursive_remove_if_empty!(node)
-          if node.text?
-            node.remove if node.text.strip.empty?
-            return
-          end
-          node.children.each do |child|
-            recursive_remove_if_empty! child
-          end
-          node.remove if node.children.empty?
-        end
-
-        def validate_all_processed(e, name)
-          e.children.each do |element|
-            case element.type
-              when Nokogiri::XML::Node::TEXT_NODE
-                next if element.text.strip.empty?
-            end
-            raise "Unrecognized #{name} element:\n#{element.inspect()[0..1024]}"
-          end
-          true
-        end
-
-        def process_paragraph(node)
-          result = {
-              :emails => [],
-              :quotes => [],
-              :links => []
-          }
-          case node.name
-            when 'ul'
-              result = []
-              node.css('li').each do |li|
-                result << process_paragraph(li)
-                li.remove if validate_all_processed li, 'ul > li'
-              end
-              return result
-            when 'a'
-              if not node.has_attribute? 'href' and node.has_attribute? 'name'
-                result = {:anchor => node.attr('name')}
-                node.remove
-                return result
-              end
-            when /h(\d+)/
-              result[:head_level] = $~[1]
-          end
-          if node.has_attribute? 'class'
-            classes = node.attr('class').split(' ')
-            if classes.include? 'articleVersion'
-              result[:tags] ||= []
-              result[:tags] << 'articleVersion'
-            end
-          end
-
-          texts = []
-          node.children.each do |element|
-            if element.type == Nokogiri::XML::Node::TEXT_NODE
-              texts << element.text.strip
-              element.remove
-              next
-            end
-
-            case element.name
-              when 'p'
-                result[:sub_paragraphs] ||= []
-                result[:sub_paragraphs] << process_paragraph(element)
-                element.remove if validate_all_processed element, 'p > p'
-              when 'phrase'
-                texts << element.text.strip
-                result[:entities] ||= []
-                entity = {}
-                element.attributes.each do |name, value|
-                  entity[name.to_sym] = value
-                end
-                result[:entities] << entity
-                element.remove
-              when 'strong', 'em'
-                texts << element.text.strip
-                element.remove
-              when 'br'
-                texts << "\n"
-                element.remove
-              when 'a'
-                texts << element.text.strip
-                a_url = element.attr('href')
-                case a_url
-                  when /^mailto:(.*)/
-                    result[:emails] << $~[1]
-                    element.remove
-                  when /^\/public\/quotes\/main\.html\?type=(?<type>\w+)&symbol=(?<symbol>[\w\.:-]+)$/
-                    result[:quotes] << {
-                        :type => $~[:type],
-                        :symbol => $~[:symbol]
-                    }
-                    element.remove
-                  else
-                    # arbitrary link
-                    result[:links] << a_url
-                    element.remove
-                end
-              when 'cite'
-                result[:cites] ||= []
-                result[:cites] << process_paragraph(element)
-                element.remove if validate_all_processed element, 'p > cite'
-              when 'span', 'no'
-                if (element.has_attribute? 'class' and element.attr('class').split(' ').include? 'quo') or
-                    (element.has_attribute? 'data-widget')
-                  element.remove
-                  next
-                end
-                r = process_paragraph element
-                if r.is_a? String
-                  texts << r
-                else
-                  r.each do |k, v|
-                    case k
-                      when :text
-                        texts << v
-                      else
-                        result[k] = result[k] + v
-                    end
-                  end
-                end
-                element.remove
-            end
-          end
-          text = texts.join(' ').squeeze(' ')
-          result.reject! { |k, v| v.empty? }
-          return text if result.empty?
-          result[:text] = text unless text.empty?
-          result
-        end
-
-        def process_social_by_line_element(element)
-          result = nil
-          if element.text?
-            result = element.text.strip
-            element.remove
-          elsif element.name == 'li' or element.name == 'em'
-            element.children.each do |li|
-              unless result.nil?
-                raise "Unsupported .socialByline Element:\n#{element.inspect}"
-              end
-              result = process_social_by_line_element li
-            end
-            element.remove if validate_all_processed element, '.socialByline li'
-          end
-          return result
-        end
-
-        def process_social_by_line (social_by_line)
-
-          def handle_by_li(li)
-            result = {}
-            while true
-              fw_sibling = li.next_sibling
-              if fw_sibling and fw_sibling.text? or
-                  (not fw_sibling.nil? and (fw_sibling.name == 'strong' or fw_sibling.name == 'em'))
-                case fw_sibling.text.strip
-                  when '', '|'
-                    fw_sibling.remove
-                    next
-                  when /in (.*) and/, /in (.*),?/, /at (.*),?/
-                    result[:location] = $~[1].strip
-                  when /from (.*)/i
-                    result[:organization] = $~[1].strip
-                  else
-                    result[:entity] = fw_sibling.text.strip
-                end
-                fw_sibling.remove
-              end
-              break
-            end
-
-            author = nil
-
-            if li.has_attribute? 'class' and li.attr("class").split(" ").include? 'byName'
-              columnist = {}
-              li.attributes.each do |name, value|
-                case name
-                  when 'class'
-                    next
-                  when 'data-dj-author-topicserviceid'
-                    columnist[:author_topicserviceid] = li.attr(name) unless li.attr(name).nil? or li.attr(name).empty?
-                  else
-                    raise "Unrecongized Attribute in li:\n#{li.inspect}"
-                end
-              end
-              li.css('a').each do |a|
-                url = a.attr('href')
-                if url.start_with? 'http://topics.wsj.com/person'
-                  columnist[:url] = url
-                  columnist[:name] = a.text.strip
-                  a.remove
-                end
-              end
-              li.children.each do |element|
-                if element.text?
-                  columnist[:name] = element.text.strip
-                  element.remove
-                end
-              end
-              author = columnist
-            else
-              li.children.each do |element|
-                if element.text?
-                  author = element.text.strip
-                  element.remove
-                end
-              end
-            end
-
-            return author if result.empty?
-            result[:name] = author
-            result
-          end
-
-          result = []
-
-          # clean up
-          social_by_line.css('li.connect').remove
-          social_by_line.css('strong').each do |node|
-            node.before(node.children)
-            node.remove
-          end
-          social_by_line.css('cite').each do |cite|
-            cite.children.each do |element|
-              r = process_social_by_line_element element
-              result << r
-            end
-            cite.remove if validate_all_processed cite, '.socialByline > cite'
-          end
-          social_by_line.css('li').each do |li|
-            result << handle_by_li(li)
-            li.remove if validate_all_processed li, 'li'
-          end
-          social_by_line.children.each do |element|
-            if element.text?
-              line = element.text.gsub("\n", ' ').squeeze(' ').strip
-              t = line.downcase
-              case t
-                when '', /by\s*/, /and\s*/, ','
-                when 'de'
-                  # foreign language TODO handle
-                when /by .*/
-                  result << line.strip.match(/by (.*)/i)[1].strip
-                else
-                  result<< {:entity => line}
-              end
-              element.remove
-            end
-          end
-          return nil if result.empty?
-          result
-        end
-
         module Parsers
           include NewsTagger::Parsers
 
@@ -411,10 +156,152 @@ module NewsTagger
             end
           end # class HeadMetaParser
 
-          class ArticleHeadlineBoxParser < HTMLParser
+          class SocialBylineParser < HTMLParser
+
+            class By_byName_star_Rule < NewsTagger::Parsers::ParserRules::RuleBase
+
+              def matches?(node_seq, parent_node)
+                return false unless parent_node.element? and parent_node.name == 'ul'
+                state = :S
+                node_seq.each do |node|
+                  if node.text? and node.content.strip.empty?
+                    node.unlink
+                    next
+                  end
+                  case state
+                    when :S
+                      if node.text? and node.content.strip.downcase == 'by'
+                        state = :by
+                        next
+                      elsif node.element? and ['li', 'cite'].include? node.name
+                        state = :li
+                        next
+                      end
+                      return false
+                    when :by, :li_separator
+                      if node.element? and ['li', 'cite'].include? node.name
+                        state = :li
+                        next
+                      end
+                      return false
+                    when :li
+                      if node.text? and ['and', ','].include? node.content.strip.downcase
+                        state = :li_separator
+                        next
+                      end
+                      return false
+                  end
+                end
+                case state
+                  when :li
+                    return true
+                end
+                false
+              end
+
+              def parse(node_seq)
+                r = []
+                state = :S
+                node_seq.each do |node|
+                  case state
+                    when :S
+                      if node.text? and node.content.strip.downcase == 'by'
+                        state = :by
+                        next
+                      elsif node.element? and ['li', 'cite'].include? node.name
+                        state = :li
+                        next
+                      end
+                      return false
+                    when :by, :li_separator
+                      if node.element? and ['li', 'cite'].include? node.name
+                        r << {:author => parse_li(node)}
+                        state = :li
+                        next
+                      end
+                    when :li
+                      if node.text? and ['and', ','].include? node.content.strip.downcase
+                        state = :li_separator
+                        next
+                      end
+                  end
+                end
+                r.reject! { |e| e.nil? }
+                node_seq.unlink
+                return nil if r.empty?
+                r
+              end
+
+              def parse_li(node)
+                r = []
+                node.attributes.each do |name, attr|
+                  if name.match /data-(\S+)/
+                    r << {:data => {:name => $~[1], :value => attr.content}}
+                    attr.unlink
+                  end
+                end
+                name_parsed = false
+                node.children.each do |nn|
+                  if nn.text? and nn.content.strip.empty?
+                    nn.unlink
+                    next
+                  end
+                  raise 'Unsupported multiple entries in .socialByline > li' if name_parsed
+                  if node.matches? '.byName' and nn.name == 'a'
+                    r << {:link => nn.attr('href')}
+                    nnn = nn.children.first
+                    if nnn.text?
+                      r << {:name => nnn.content.strip}
+                      nnn.unlink
+                    end
+                  elsif nn.text?
+                    r << {:name => nn.content.strip}
+                    nn.unlink
+                  end
+                  name_parsed = true
+                end
+
+                ensure_empty_node node
+                r.reject! { |x| x.nil? }
+                return r
+              end
+            end
+
+            @@node_sequence_rules = [By_byName_star_Rule.new]
 
             def parse(node)
+              node.css('#connectButton').unlink
+              node.css('li.connect').unlink
+              node.children.each do |n|
+                n.unlink if n.text? and n.content.strip.empty?
+              end
+              node_seq = node.children
+              matched = false
+              begin
+                @@node_sequence_rules.each do |rule|
+                  if rule.matches? node_seq, node
+                    matched = true
+                    r = rule.parse node_seq
+                    return nil if r.nil?
+                    ensure_empty_node node
+                    return {:social_byline => r}
+                  end
+                end
+                raise "No rule matches the .socialByline node sequence.\n#{node_seq.inspect}"
+              ensure
+                node_seq.unlink if matched
+              end
+            end
+          end
+
+          class ArticleHeadlineBoxParser < HTMLParser
+            @@social_byline_parser = SocialBylineParser.new
+
+            # @return [Array]
+            def parse(node)
               r = []
+
+              # .cMetadata
               c_metadata = []
               select_only_node_to_parse(node, 'ul.cMetadata') do |c_metadata_node|
                 c_metadata << select_only_node_to_parse(c_metadata_node, 'li.articleSection') do |article_section_node|
@@ -431,6 +318,7 @@ module NewsTagger
                 end
                 ensure_empty_node c_metadata_node
               end
+
               node.children.each do |n|
                 if n.comment?
                   lines = n.content.split "\n"
@@ -446,12 +334,24 @@ module NewsTagger
                 end
               end
               r << {:c_metadata => c_metadata} unless c_metadata.empty?
+
               select_only_node_to_parse(node, 'h1') do |h1|
                 r << {:headline => h1.text.strip}
               end
               select_only_node_to_parse(node, 'h2.subhead', true) do |h2|
                 r << {:subhead => h2.text.strip}
               end
+              select_only_node_to_parse node, '.columnist', true do |columnist_node|
+                columnist_node.css('div.icon').unlink
+                select_only_node_to_parse columnist_node, '.socialByline' do |social_byline_node|
+                  r << @@social_byline_parser.parse(social_byline_node)
+                end
+                columnist_node.children.each do |node|
+                  node.unlink if node.text? and node.text.strip == '-'
+                end
+                ensure_empty_node columnist_node
+              end
+
               ensure_empty_node node
               r
             end
@@ -510,126 +410,6 @@ module NewsTagger
 
           end # class ArticleHeadlineBoxParser
 
-          class SocialBylineParser < HTMLParser
-
-            class By_li_star_Rule < NewsTagger::Parsers::ParserRules::RuleBase
-              def validate?(node_seq, parent_node)
-                return false unless parent_node.element? and parent_node.name == 'ul'
-                state = :S
-                node_seq.each do |node|
-                  if node.text? and node.content.strip.empty?
-                    node.unlink
-                    next
-                  end
-                  case state
-                    when :S
-                      if node.text? and node.content.strip.downcase == 'by'
-                        state = :by
-                        next
-                      end
-                      return false
-                    when :by, :li_separator
-                      if node.element? and node.name == 'li'
-                        state = :li
-                        next
-                      end
-                      return false
-                    when :li
-                      if node.text? and ['and', ','].include? node.content.strip.downcase
-                        state = :li_separator
-                        next
-                      end
-                      return false
-                  end
-                end
-                case state
-                  when :li
-                    return true
-                end
-                false
-              end
-
-              def parse(node_seq)
-                r = []
-                state = :S
-                node_seq.each do |node|
-                  case state
-                    when :S
-                      if node.text? and node.content.strip.downcase == 'by'
-                        state = :by
-                        next
-                      end
-                      return false
-                    when :by, :li_separator
-                      if node.element? and node.name == 'li'
-                        r << {:author => parse_li(node)}
-                        state = :li
-                        next
-                      end
-                    when :li
-                      if node.text? and ['and', ','].include? node.content.strip.downcase
-                        state = :li_separator
-                        next
-                      end
-                  end
-                end
-                r.reject! { |e| e.nil? }
-                node_seq.unlink
-                return nil if r.empty?
-                r
-              end
-
-              def parse_li(node)
-                r = []
-                node.attributes.each do |name, attr|
-                  if name.match /data-(\S+)/
-                    r << {:data => {:name => $~[1], :value => attr.content}}
-                    attr.unlink
-                  end
-                end
-                if node.children.size == 1
-                  child_node = node.children.first
-                  if child_node.text?
-                    r << {:name => child_node.content.strip}
-                    child_node.unlink
-                  elsif child_node.name == 'a'
-                    attribute_value = child_node.attr('href')
-                    r << {:link => attribute_value} unless attribute_value.nil?
-                    cc_node = child_node.children.first
-                    if cc_node.text?
-                      r << {:name => cc_node.content.strip}
-                      cc_node.unlink
-                    end
-                    ensure_empty_node child_node
-                  end
-                end
-                ensure_empty_node node
-                r.reject! { |x| x.nil? }
-                return r
-              end
-            end
-
-            def parse(node)
-              node.css('#connectButton').unlink
-              node_seq = node.children
-              matched = false
-              begin
-                [By_li_star_Rule.new].each do |rule|
-                  if rule.validate? node_seq, node
-                    matched = true
-                    r = rule.parse node_seq
-                    return nil if r.nil?
-                    ensure_empty_node node
-                    return {:social_byline => r}
-                  end
-                end
-                raise "No rule matches the .socialByline node sequence.\n#{node_seq.inspect}"
-              ensure
-                node_seq.unlink if matched
-              end
-            end
-          end
-
           class ArticlePageParser < HTMLParser
             @@social_byline_parser = SocialBylineParser.new
 
@@ -686,10 +466,13 @@ module NewsTagger
 
               # pre parse tree
               case node.name
+                when 'br'
+                  node.unlink
+                  return nil, nil
                 when 'a'
                   if not node.has_attribute?('href') and node.has_attribute?('name')
                     begin
-                      return {:anchor => {:name => node.attr('name')}}
+                      return {:anchor => {:name => node.attr('name')}}, nil
                     ensure
                       node.unlink
                     end
@@ -697,7 +480,7 @@ module NewsTagger
                 when 'span'
                   if node.has_attribute? 'data-widget'
                     begin
-                      return {:widget => {:ticker_name => node.attr('data-ticker-name')}}
+                      return {:widget => {:ticker_name => node.attr('data-ticker-name')}}, nil
                     ensure
                       node.unlink
                     end
@@ -711,7 +494,7 @@ module NewsTagger
                 p, ff = parse_paragraph n
                 f << ff unless ff.nil?
                 last_p = parsed_children.last
-                if not last_p.nil? and last_p.has_key? :text and p.has_key? :text
+                if not (last_p.nil? or p.nil?) and last_p.has_key? :text and p.has_key? :text
                   # append the text to last one
                   last_p[:text] = last_p[:text] + ' ' + p[:text]
                   next
@@ -782,6 +565,7 @@ module NewsTagger
             def parse(node)
               article_start_flag = false
               article_end_flag = false
+              no_content = false
 
               article = []
               r = select_set_to_parse(node, ['head meta']) do |node_set|
@@ -800,16 +584,17 @@ module NewsTagger
               end
               article_story_body_node = node.css('#article_story_body').first
               if article_story_body_node.nil?
+                no_content = true
                 article << {:_nobody => true}
               else
-                select_only_node_to_parse article_story_body_node, '.articlePage', true do |article_page_node|
+                select_only_node_to_parse article_story_body_node, '.articlePage' do |article_page_node|
                   article += @@article_page_parser.parse(article_page_node) do |state|
                     article_end_flag = true if state[:article_end_flag]
                   end
                 end
               end
 
-              raise "Improper article start/end flag: start(#{article_start_flag}), end(#{article_end_flag})" unless (article_start_flag and article_end_flag)
+              raise "Improper article start/end flag: start(#{article_start_flag}), end(#{article_end_flag})" unless (article_start_flag and article_end_flag) or no_content
 
               {:article => article}
             end
@@ -823,68 +608,11 @@ module NewsTagger
           r = Parsers::ArticleParser.new.parse(doc)
           r[:url] = url
 
-          return r
-
-          puts JSON.pretty_generate(results)
-          raise 'Need Developer'
-
-          parsed_metadata = {}
-
-          doc.css(".articlePage").each do |article_page|
-            article_page.css('ul.socialByline').each do |social_by_line|
-              by = nil
-              begin
-                by = process_social_by_line social_by_line
-                social_by_line.remove if validate_all_processed social_by_line, '.columnist .social_by_line'
-              rescue
-                by = social_by_line.text.gsub("\n", ' ').squeeze(' ').strip
-                social_by_line.remove
-              end
-              article[:by] = by unless by.nil?
-            end
-            fix_article_page! article_page
-            article_page.children.filter('cite').each do |cite|
-              article[:cites] ||= []
-              article[:cites] << cite.text
-              cite.remove
-            end
-            article_page.css('.insetContent', '.insetCol3wide', '.insetCol6wide', '.embedType-interactive').remove
-            article_page.children.each do |element|
-              if element.comment?
-                if element.content.strip == 'article end'
-                  article_end_flag = true
-                  element.remove
-                  next
-                end
-              end
-              case element.name
-                when 'table'
-                  recursive_remove_if_empty! element
-                  # TODO parse table
-                  element.remove
-                  next
-              end
-            end
-
-            article_page.remove if validate_all_processed article_page, '.articlePage'
-          end
-
-          raise "Improper article start/end flag: start(#{article_start_flag}), end(#{article_end_flag})" unless (article_start_flag and article_end_flag) or
-              (article[:_no_head] and article[:_no_body])
-
-          article
+          r
         end
 
         def fix_article_html!(text)
           text.gsub!('<TH>', ' ')
-        end
-
-        def fix_article_page!(article_page)
-          article_page.css('.legacyInset').each do |legacy_insert|
-            legacy_insert.css('.insetContent').remove
-            legacy_insert.before(legacy_insert.children)
-            legacy_insert.remove if validate_all_processed legacy_insert, '.legacyInset'
-          end
         end
 
         def retrieve(date = nil, record_date = true)
