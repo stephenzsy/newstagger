@@ -11,7 +11,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '2013091503'
-        PROCESSOR_PATCH = 4
+        PROCESSOR_PATCH = 5
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -166,8 +166,8 @@ module NewsTagger
                 text = node_seq.first.content.strip
                 case text
                   when /^By ([[[:upper:]]\. ]+)( and ([[[:upper:]]\. ]+))?$/
-                    r << {:author => $~[1]}
-                    r << {:author => $~[3]} unless $~[3].nil?
+                    r << {:author => [:name => $~[1]]}
+                    r << {:author => [:name => $~[3]]} unless $~[3].nil?
                   else
                     raise ParserRuleNotMatchException
                 end
@@ -264,7 +264,7 @@ module NewsTagger
                             end
                           end
                           state = :li_continue
-                        elsif text.match /^(in|at) (.*) and$/
+                        elsif text.match /^(in|at) (.*)( and|,)$/
                           location = $~[1]
                           loc_last_authors.each do |author|
                             author[:location] = location
@@ -375,7 +375,7 @@ module NewsTagger
                     next
                   end
                 end
-                raise "No rule matches the .socialByline node sequence.\n#{node_seq.inspect}"
+                return {:social_by_line => super(node)}
               ensure
                 node_seq.unlink if matched
               end
@@ -391,7 +391,7 @@ module NewsTagger
 
               # .cMetadata
               c_metadata = []
-              select_only_node_to_parse(node, 'ul.cMetadata') do |c_metadata_node|
+              select_only_node_to_parse(node, 'ul.cMetadata', true) do |c_metadata_node|
                 c_metadata << select_only_node_to_parse(c_metadata_node, 'li.articleSection', true) do |article_section_node|
                   r_article_section = {:name => article_section_node.text.strip}
                   select_only_node_to_parse article_section_node, 'a', true do |a|
