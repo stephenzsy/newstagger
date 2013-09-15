@@ -667,6 +667,10 @@ module NewsTagger
         def cleanup_status
           @error_table.items.each do |item|
             next unless item.hash_value == 'wsj-error'
+            if item['processor_version'] < PROCESSOR_VERSION
+              item.delete
+              next
+            end
             next unless item.attributes['processor_version'] == PROCESSOR_VERSION
             unless item.attributes['fix_patch'].nil? or item.attributes['processor_patch'] >= item.attributes['fix_patch']
               item.delete
