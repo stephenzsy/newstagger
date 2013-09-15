@@ -10,7 +10,7 @@ module NewsTagger
       class Retriever < NewsTagger::Retriever::S3CachedRetriever
 
         WEBSITE_VERSION = '20130825'
-        PROCESSOR_VERSION = '2013091501'
+        PROCESSOR_VERSION = '2013091502'
         PROCESSOR_PATCH = 1
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
@@ -157,51 +157,60 @@ module NewsTagger
           end # class HeadMetaParser
 
           class SocialBylineParser < HTMLParser
+            include NewsTagger::Parsers::ParserRules
 
-            class By_byName_star_Rule < NewsTagger::Parsers::ParserRules::RuleBase
+            class TextRule < RuleBase
+              def parse(node_seq, parent_node)
+                r = []
+                raise ParserRuleNotMatchException unless node_seq.size == 1 and node_seq.first.text?
+                text = node_seq.first.content.strip
+                case text
+                  when /^By ([[[:upper:]]\. ]+)( and ([[[:upper:]]\. ]+))?$/
+                    r << {:author => $~[1]}
+                    r << {:author => $~[3]} unless $~[3].nil?
+                  else
+                    raise ParserRuleNotMatchException
+                end
+                node_seq.unlink
+                r
+              end
+            end # class TextRule
 
-              def matches?(node_seq, parent_node)
-                return false unless parent_node.element? and parent_node.name == 'ul'
+            class By_name_cite_Rule < RuleBase
+              def parse(node_seq, parent_node)
                 state = :S
+                r = {}
                 node_seq.each do |node|
-                  if node.text? and node.content.strip.empty?
-                    node.unlink
-                    next
-                  end
                   case state
                     when :S
-                      if node.text? and node.content.strip.downcase == 'by'
-                        state = :by
-                        next
-                      elsif node.element? and ['li', 'cite'].include? node.name
-                        state = :li
+                      if node.text? and node.content.strip =~ /by (.*)/i
+                        r[:author] = $~[1]
+                        state = :name
                         next
                       end
-                      return false
-                    when :by, :li_separator
-                      if node.element? and ['li', 'cite'].include? node.name
-                        state = :li
+                      raise ParserRuleNotMatchException
+                    when :name
+                      if node.name == 'cite' and node.children.size == 1 and node.children.first.text?
+                        r[:cite] = node.children.first.content.strip
+                        state = :F
                         next
                       end
-                      return false
-                    when :li
-                      if node.text? and ['and', ','].include? node.content.strip.downcase
-                        state = :li_separator
-                        next
-                      end
-                      return false
+                      raise ParserRuleNotMatchException
                   end
                 end
-                case state
-                  when :li
-                    return true
-                end
-                false
+                raise ParserRuleNotMatchException unless state == :F
+                node_seq.unlink
+                [r]
               end
+            end # class By_name_cite_Rule
 
-              def parse(node_seq)
+            class By_byName_star_Cite_Rule < RuleBase
+
+              def parse(node_seq, parent_node)
+                raise ParserRuleNotMatchException unless parent_node.element? and parent_node.name == 'ul'
                 r = []
                 state = :S
+                last_author = nil
                 node_seq.each do |node|
                   case state
                     when :S
@@ -212,19 +221,55 @@ module NewsTagger
                         state = :li
                         next
                       end
-                      return false
                     when :by, :li_separator
                       if node.element? and ['li', 'cite'].include? node.name
-                        r << {:author => parse_li(node)}
+                        last_author = {:author => parse_li(node)}
+                        r << last_author
                         state = :li
                         next
                       end
                     when :li
-                      if node.text? and ['and', ','].include? node.content.strip.downcase
-                        state = :li_separator
+                      if node.text?
+                        text = node.content.strip
+                        if text == '|'
+                          state = :cite_separator
+
+                        elsif text.match /^in (.*)( and)?$/
+                          last_author[:location] = $~[1]
+                          if $~[2].nil?
+                            state = :F
+                          else
+                            state = :li_separator
+                          end
+                        elsif ['and', ','].include? text.downcase
+                          state = :li_separator
+                        else
+                          raise ParserRuleNotMatchException
+                        end
+                        next
+                      end
+                    when :F
+                      if node.text?
+                        text = node.content.strip
+                        if text == '|'
+                          state = :cite_separator
+                          next
+                        end
+                      end
+                    when :cite_separator
+                      if node.name == 'cite' and node.children.size == 1 and node.children.first.text?
+                        text = node.children.first.content.strip
+                        r << {:cite => text}
+                        state = :F
                         next
                       end
                   end
+                  raise ParserRuleNotMatchException
+                end
+                case state
+                  when :li, :F
+                  else
+                    raise ParserRuleNotMatchException
                 end
                 r.reject! { |e| e.nil? }
                 node_seq.unlink
@@ -233,6 +278,7 @@ module NewsTagger
               end
 
               def parse_li(node)
+                node = node.dup
                 r = []
                 node.attributes.each do |name, attr|
                   if name.match /data-(\S+)/
@@ -247,7 +293,7 @@ module NewsTagger
                     next
                   end
                   raise 'Unsupported multiple entries in .socialByline > li' if name_parsed
-                  if node.matches? '.byName' and nn.name == 'a'
+                  if not node.attr('class').nil? and node.attr('class').split(/\s+/).include? 'byName' and nn.name == 'a'
                     r << {:link => nn.attr('href')}
                     nnn = nn.children.first
                     if nnn.text?
@@ -265,9 +311,13 @@ module NewsTagger
                 r.reject! { |x| x.nil? }
                 return r
               end
-            end
+            end # class By_byName_star_Rule
 
-            @@node_sequence_rules = [By_byName_star_Rule.new]
+            @@node_sequence_rules = [
+                By_byName_star_Cite_Rule.new,
+                By_name_cite_Rule.new,
+                TextRule.new,
+            ]
 
             def parse(node)
               node.css('#connectButton').unlink
@@ -279,12 +329,13 @@ module NewsTagger
               matched = false
               begin
                 @@node_sequence_rules.each do |rule|
-                  if rule.matches? node_seq, node
-                    matched = true
-                    r = rule.parse node_seq
-                    return nil if r.nil?
+                  begin
+                    r = rule.parse node_seq, node
                     ensure_empty_node node
+                    return nil if r.nil?
                     return {:social_byline => r}
+                  rescue ParserRuleNotMatchException
+                    next
                   end
                 end
                 raise "No rule matches the .socialByline node sequence.\n#{node_seq.inspect}"
@@ -330,6 +381,9 @@ module NewsTagger
                   else
                     c_metadata += parse_multi_line_comment(lines)
                   end
+                  n.unlink
+                elsif n.name.match /h5/ and n.one_level_text?
+                  r << {:heading => n.text, :level => $~[1].to_i}
                   n.unlink
                 end
               end
@@ -525,6 +579,8 @@ module NewsTagger
                   r = {:strong => parsed_children}
                 when 'em'
                   r = {:em => parsed_children}
+                when 'blockquote'
+                  r = {:block_quote => parsed_children}
                 when 'a'
                   if node.matches? '.topicLink'
                     return {:topic_link => {:link => node.attr('href'), :_ => parsed_children}}
@@ -546,10 +602,17 @@ module NewsTagger
                     p node
                     raise "Need Developer"
                   end
-                when 'div'
+                when 'div', 'span', 'li'
                   ensure_empty_node node
+                when 'ul'
+                  if node.matches? '.articleList'
+                    r = {:article_list => parsed_children}
+                  else
+                    p node
+                    raise 'Need Developer'
+                  end
                 else
-                  raise 'Need Developer: ' + "\n" + node.inspect
+                  raise 'Unrecognized node in .articlePage paragraphs: ' + "\n" + node.inspect + "\n"
               end
               ensure_empty_node node
               return r, f

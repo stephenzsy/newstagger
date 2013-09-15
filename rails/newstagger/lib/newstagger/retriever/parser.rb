@@ -4,6 +4,17 @@ module NewsTagger
   module Parsers
 
     module Utils
+
+      module Nokogiri::XML
+
+        class Node
+          def one_level_text?
+            self.children.size == 1 and self.children.first.text?
+          end
+        end
+
+      end
+
       def select_set_to_parse(node, selectors)
         node_set = node.css(*selectors)
         begin
@@ -68,14 +79,16 @@ module NewsTagger
     end
 
     module ParserRules
+
+      class ParserRuleNotMatchException < StandardError
+
+      end
+
       class RuleBase
         include Parsers::Utils
+        include Parsers::ParserRules
 
-        def validate?(node_sequence, parent_node)
-          true
-        end
-
-        def parse(node_sequence)
+        def parse(node_sequence, parent_node)
           HTMLParser.parse_node_set(node_sequence)
         end
       end
