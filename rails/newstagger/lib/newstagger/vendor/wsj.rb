@@ -10,8 +10,8 @@ module NewsTagger
       class Retriever < NewsTagger::Retriever::S3CachedRetriever
 
         WEBSITE_VERSION = '20130825'
-        PROCESSOR_VERSION = '2013091503'
-        PROCESSOR_PATCH = 6
+        PROCESSOR_VERSION = '2013091504'
+        PROCESSOR_PATCH = 7
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -419,9 +419,20 @@ module NewsTagger
                     c_metadata += parse_multi_line_comment(lines)
                   end
                   n.unlink
-                elsif n.name.match /h5/ and n.one_level_text?
-                  r << {:heading => n.text, :level => $~[1].to_i}
-                  n.unlink
+                elsif n.name == 'h5'
+                  n.children.each do |nn|
+                    nn.unlink if nn.text? and nn.content.strip.empty?
+                  end
+                  if n.children.size == 1
+                    nn = n.children.first
+                    if nn.text?
+                      r << {:heading => n.text, :level => 5}
+                      n.unlink
+                    elsif nn.element? and nn.name == 'a' and nn.one_level_text?
+                      r << {:heading => nn.text, :level => 5, :link => nn.attr('href')}
+                      n.unlink
+                    end
+                  end
                 end
               end
               r << {:c_metadata => c_metadata} unless c_metadata.empty?
