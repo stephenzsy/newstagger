@@ -11,7 +11,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '2013091504'
-        PROCESSOR_PATCH = 8
+        PROCESSOR_PATCH = 9
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -664,6 +664,13 @@ module NewsTagger
                     p node
                     raise 'Need Developer'
                   end
+                when 'phrase'
+                  rr = {}
+                  node.attributes.each do |name, attr_node|
+                    rr[name] = attr_node.content
+                  end
+                  rr[:_] = parsed_children
+                  r = {:phrase => rr}
                 else
                   raise 'Unrecognized node in .articlePage paragraphs: ' + "\n" + node.inspect + "\n"
               end
