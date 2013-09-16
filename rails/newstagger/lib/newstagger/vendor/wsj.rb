@@ -11,7 +11,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '2013091504'
-        PROCESSOR_PATCH = 7
+        PROCESSOR_PATCH = 8
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -516,7 +516,7 @@ module NewsTagger
             @@social_byline_parser = SocialBylineParser.new
 
             def parse(article_page_node)
-              article_page_node.css('.insetContent', '.insetCol3wide', 'insetCol6wide', '.offDutyMoreSection').unlink
+              article_page_node.css('.insetContent', '.insetCol3wide', 'insetCol6wide', '.offDutyMoreSection', 'table').unlink
 
               # .socialByLine
               r = []
