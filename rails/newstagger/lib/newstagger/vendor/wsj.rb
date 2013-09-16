@@ -11,7 +11,7 @@ module NewsTagger
 
         WEBSITE_VERSION = '20130825'
         PROCESSOR_VERSION = '2013091504'
-        PROCESSOR_PATCH = 9
+        PROCESSOR_PATCH = 10
         TIME_ZONE = ActiveSupport::TimeZone['America/New_York']
 
         def initialize(opt={})
@@ -329,7 +329,7 @@ module NewsTagger
                     nn.unlink
                     next
                   end
-                  raise 'Unsupported multiple entries in .socialByline > li' if name_parsed
+                  raise ParserRuleNotMatchException if name_parsed
                   if not node.attr('class').nil? and node.attr('class').split(/\s+/).include? 'byName' and nn.name == 'a'
                     r << {:link => nn.attr('href')}
                     nnn = nn.children.first
@@ -440,8 +440,10 @@ module NewsTagger
               select_only_node_to_parse(node, 'h1') do |h1|
                 r << {:headline => h1.text.strip}
               end
-              select_only_node_to_parse(node, 'h2.subhead', true) do |h2|
-                r << {:subhead => h2.text.strip}
+              select_set_to_parse(node, 'h2.subhead') do |nodes|
+                nodes.each do |h2|
+                  r << {:subhead => h2.text.strip}
+                end
               end
               select_only_node_to_parse node, '.columnist', true do |columnist_node|
                 columnist_node.css('div.icon').unlink
